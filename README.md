@@ -97,7 +97,7 @@ Public repository — pull requests welcome.
 
 ## License
 
-[MIT](LICENSE) — see repository root when added.
+[MIT](LICENSE)
 
 ## Links
 
