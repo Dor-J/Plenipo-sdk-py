@@ -15,6 +15,7 @@ from nacl.public import Box, PublicKey, SealedBox
 from nacl.signing import SigningKey
 
 from plenipo.crypto import base64url, signing_input
+from plenipo.payments import build_relay_payment
 
 MessageHandler = Callable[[dict[str, Any]], Awaitable[None] | None]
 
@@ -87,7 +88,7 @@ class PlenipoClient:
         created_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         envelope = {
             'type': 'envelope',
-            'v': '0.2',
+            'v': '0.3',
             'envelope_id': envelope_id,
             'sender_did': self.did,
             'recipient_did': recipient_did,
@@ -97,9 +98,17 @@ class PlenipoClient:
         }
         sig = self._signing.sign(signing_input.build(envelope)).signature
         envelope['signature'] = base64url.encode(sig)
+        cost_tokens = max(1, (len(sealed) + 1023) // 1024)
+        x402 = build_relay_payment(self.did, cost_tokens, envelope_id)
         ref = str(self._ref)
         self._ref += 1
-        await self._send_phoenix(self._join_ref, ref, 'relay:inbox', 'message.send', envelope)
+        await self._send_phoenix(
+            self._join_ref,
+            ref,
+            'relay:inbox',
+            'message.send',
+            {'envelope': envelope, 'payment': {'x402': x402}},
+        )
 
     async def _send_phoenix(
         self,

@@ -70,6 +70,32 @@ class PlenipoMCP:
                     description='Generate a new DID document and key pair',
                     inputSchema={'type': 'object', 'properties': {}},
                 ),
+                Tool(
+                    name='plenipo_purchase_bundle',
+                    description='Purchase a token bundle via x402',
+                    inputSchema={
+                        'type': 'object',
+                        'properties': {
+                            'agent_did': {'type': 'string'},
+                            'bundle_id': {'type': 'string'},
+                            'relay_url': {'type': 'string'},
+                        },
+                        'required': ['agent_did', 'bundle_id'],
+                    },
+                ),
+                Tool(
+                    name='plenipo_mandate_prepare',
+                    description='Prepare unsigned mandate JSON for operator signing',
+                    inputSchema={
+                        'type': 'object',
+                        'properties': {
+                            'agent_did': {'type': 'string'},
+                            'operator_did': {'type': 'string'},
+                            'relay_url': {'type': 'string'},
+                        },
+                        'required': ['agent_did', 'operator_did'],
+                    },
+                ),
             ]
 
         @server.call_tool()
@@ -84,6 +110,28 @@ class PlenipoMCP:
                     capability=args.get('capability'),
                 )
                 return [TextContent(type='text', text=str(results))]
+
+            if name == 'plenipo_purchase_bundle':
+                from plenipo.payments import purchase_bundle
+
+                receipt = await purchase_bundle(
+                    args.get('relay_url', 'http://localhost:4000'),
+                    args['agent_did'],
+                    args['bundle_id'],
+                )
+                return [TextContent(type='text', text=str(receipt))]
+
+            if name == 'plenipo_mandate_prepare':
+                from plenipo.payments import mandate_prepare
+
+                result = await mandate_prepare(
+                    args.get('relay_url', 'http://localhost:4000'),
+                    {
+                        'agent_did': args['agent_did'],
+                        'operator_did': args['operator_did'],
+                    },
+                )
+                return [TextContent(type='text', text=str(result))]
 
             if name == 'plenipo_did_create':
                 from plenipo.did import create_did_document
