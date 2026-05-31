@@ -84,6 +84,18 @@ class PlenipoMCP:
                     },
                 ),
                 Tool(
+                    name='plenipo_delivery_status',
+                    description='Get delivery status for an envelope',
+                    inputSchema={
+                        'type': 'object',
+                        'properties': {
+                            'envelope_id': {'type': 'string'},
+                            'relay_url': {'type': 'string'},
+                        },
+                        'required': ['envelope_id'],
+                    },
+                ),
+                Tool(
                     name='plenipo_mandate_prepare',
                     description='Prepare unsigned mandate JSON for operator signing',
                     inputSchema={
@@ -132,6 +144,15 @@ class PlenipoMCP:
                     },
                 )
                 return [TextContent(type='text', text=str(result))]
+
+            if name == 'plenipo_delivery_status':
+                from plenipo.delivery import get_delivery_status
+
+                status = await get_delivery_status(
+                    args.get('relay_url', 'http://localhost:4000'),
+                    args['envelope_id'],
+                )
+                return [TextContent(type='text', text=str(status))]
 
             if name == 'plenipo_did_create':
                 from plenipo.did import create_did_document

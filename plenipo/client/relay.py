@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal, TypedDict
 from urllib.parse import urlencode, urlparse
 
 import httpx
@@ -15,9 +15,23 @@ from nacl.public import Box, PublicKey, SealedBox
 from nacl.signing import SigningKey
 
 from plenipo.crypto import base64url, signing_input
+from plenipo.delivery import build_receipt
 from plenipo.payments import build_relay_payment
 
 MessageHandler = Callable[[dict[str, Any]], Awaitable[None] | None]
+ReceiptHandler = Callable[[dict[str, Any]], Awaitable[None] | None]
+
+SendAckStatus = Literal['delivered', 'queued']
+
+
+class SendAck(TypedDict, total=False):
+    """Ack response from message.send."""
+
+    type: str
+    v: str
+    envelope_id: str
+    status: SendAckStatus
+    queued_until: str
 
 
 class PlenipoClient:
@@ -30,28 +44,38 @@ class PlenipoClient:
         auth_secret_b64: str,
         did_document_url: str,
         relay_url: str = 'ws://localhost:4000/agent/websocket',
+        auto_receipt: bool = True,
+        protocol_version: str = '0.4',
     ) -> None:
         self.did = did
         self._signing = SigningKey(base64url.decode(auth_secret_b64))
         self.did_document_url = did_document_url
+        self._auto_receipt = auto_receipt
+        self._protocol_version = protocol_version
         parsed = urlparse(relay_url.replace('ws://', 'http://').replace('wss://', 'https://'))
-        self._http_base = f'{parsed.scheme}://{parsed.netloc}'
+        self.relay_http_url = f'{parsed.scheme}://{parsed.netloc}'
         self._ws_url = relay_url
         self._handlers: list[MessageHandler] = []
+        self._receipt_handlers: list[ReceiptHandler] = []
         self._ws: Any = None
         self._join_ref = '1'
         self._ref = 2
+        self._pending: dict[str, asyncio.Future[Any]] = {}
 
     def on_message(self, handler: MessageHandler) -> None:
         """Registers a handler for incoming envelopes."""
         self._handlers.append(handler)
+
+    def on_receipt(self, handler: ReceiptHandler) -> None:
+        """Registers a handler for message.receipt pushes to the sender."""
+        self._receipt_handlers.append(handler)
 
     async def connect(self) -> None:
         """Authenticates and joins relay:inbox."""
         async with httpx.AsyncClient() as client:
             challenge = (
                 await client.post(
-                    f'{self._http_base}/auth/challenge',
+                    f'{self.relay_http_url}/auth/challenge',
                     json={'did': self.did},
                 )
             ).json()
@@ -81,14 +105,14 @@ class PlenipoClient:
         asyncio.create_task(reader())
         await joined.wait()
 
-    async def send(self, recipient_did: str, plaintext: str, recipient_public_key: bytes) -> None:
-        """Sends a sealed encrypted envelope."""
+    async def send(self, recipient_did: str, plaintext: str, recipient_public_key: bytes) -> SendAck:
+        """Sends a sealed encrypted envelope and returns the relay ack."""
         sealed = SealedBox(PublicKey(recipient_public_key)).encrypt(plaintext.encode('utf-8'))
         envelope_id = _generate_ulid()
         created_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         envelope = {
             'type': 'envelope',
-            'v': '0.3',
+            'v': self._protocol_version,
             'envelope_id': envelope_id,
             'sender_did': self.did,
             'recipient_did': recipient_did,
@@ -102,13 +126,34 @@ class PlenipoClient:
         x402 = build_relay_payment(self.did, cost_tokens, envelope_id)
         ref = str(self._ref)
         self._ref += 1
-        await self._send_phoenix(
-            self._join_ref,
+        return await self._request_reply(
             ref,
-            'relay:inbox',
             'message.send',
             {'envelope': envelope, 'payment': {'x402': x402}},
         )
+
+    async def send_receipt(self, envelope_id: str) -> dict[str, Any]:
+        """Sends a delivery receipt for a received envelope."""
+        ref = str(self._ref)
+        self._ref += 1
+        return await self._request_reply(ref, 'message.receipt', build_receipt(envelope_id))
+
+    async def get_delivery_status(self, envelope_id: str) -> dict[str, Any]:
+        """Queries delivery status via the relay channel."""
+        ref = str(self._ref)
+        self._ref += 1
+        return await self._request_reply(
+            ref,
+            'delivery.get',
+            {'envelope_id': envelope_id},
+        )
+
+    async def _request_reply(self, ref: str, event: str, payload: dict[str, Any]) -> Any:
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[Any] = loop.create_future()
+        self._pending[ref] = fut
+        await self._send_phoenix(self._join_ref, ref, 'relay:inbox', event, payload)
+        return await fut
 
     async def _send_phoenix(
         self,
@@ -124,10 +169,28 @@ class PlenipoClient:
     async def _handle_phoenix(self, msg: list[Any], joined: asyncio.Event) -> None:
         event = msg[3]
         payload = msg[4] if len(msg) > 4 else {}
-        if event == 'phx_reply' and payload.get('status') == 'ok':
-            joined.set()
+        ref = msg[1] if len(msg) > 1 else None
+
+        if event == 'phx_reply':
+            if ref and ref in self._pending:
+                pending = self._pending.pop(ref)
+                if payload.get('status') == 'ok':
+                    pending.set_result(payload.get('response', {}))
+                else:
+                    pending.set_exception(RuntimeError(str(payload)))
+            elif payload.get('status') == 'ok' and not payload.get('response'):
+                joined.set()
+
         if event == 'message.deliver':
             for handler in self._handlers:
+                result = handler(payload)
+                if asyncio.iscoroutine(result):
+                    await result
+            if self._auto_receipt and payload.get('envelope_id'):
+                await self.send_receipt(payload['envelope_id'])
+
+        if event == 'message.receipt':
+            for handler in self._receipt_handlers:
                 result = handler(payload)
                 if asyncio.iscoroutine(result):
                     await result
