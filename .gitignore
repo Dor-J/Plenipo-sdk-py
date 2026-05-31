@@ -64,3 +64,9 @@ Thumbs.db
 # Uncomment if you prefer not to commit:
 # poetry.lock
 # uv.lock
+
+# Agents
+.claude/
+.cursor/
+.codex/
+.agent/
