@@ -45,7 +45,7 @@ class PlenipoClient:
         did_document_url: str,
         relay_url: str = 'ws://localhost:4000/agent/websocket',
         auto_receipt: bool = True,
-        protocol_version: str = '0.4',
+        protocol_version: str = '1.0',
     ) -> None:
         self.did = did
         self._signing = SigningKey(base64url.decode(auth_secret_b64))
