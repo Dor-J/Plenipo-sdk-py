@@ -114,6 +114,46 @@ class PlenipoMCP:
         async def call_tool(name: str, arguments: dict | None) -> list[TextContent]:
             args = arguments or {}
 
+            if name == 'plenipo_send':
+                from plenipo.mcp.runtime import get_mcp_runtime
+
+                runtime = get_mcp_runtime()
+                ack = await runtime.send(
+                    args['recipient_did'],
+                    args['message'],
+                    args.get('recipient_document_url'),
+                )
+                return [TextContent(type='text', text=str(ack))]
+
+            if name == 'plenipo_receive':
+                from plenipo.mcp.runtime import get_mcp_runtime
+
+                runtime = get_mcp_runtime()
+                await runtime.ensure_connected()
+                messages = runtime.drain_messages(
+                    args.get('since'),
+                    int(args.get('limit', 100)),
+                )
+                payload = [
+                    {
+                        'kind': m.kind,
+                        'envelope_id': m.envelope_id,
+                        'sender_did': m.sender_did,
+                        'recipient_did': m.recipient_did,
+                        'plaintext': m.plaintext,
+                        'ciphertext': m.ciphertext,
+                        'received_at': m.received_at_iso,
+                    }
+                    for m in messages
+                ]
+                return [TextContent(type='text', text=str({'messages': payload}))]
+
+            if name == 'plenipo_balance':
+                from plenipo.mcp.runtime import get_mcp_runtime
+
+                balance = await get_mcp_runtime().get_balance()
+                return [TextContent(type='text', text=str({'balance': balance}))]
+
             if name == 'plenipo_discover':
                 from plenipo.discover import discover_agents
 
@@ -187,11 +227,20 @@ class PlenipoMCP:
 
 def main() -> None:
     """Run the MCP server over stdio using environment variables."""
+    _ = load_mcp_config_from_env()
     skill = PlenipoMCP(
-        did_private_key=os.environ['PLENIPO_DID_PRIVATE_KEY'],
+        did_private_key=os.environ.get('PLENIPO_AUTH_SECRET_B64')
+        or os.environ['PLENIPO_DID_PRIVATE_KEY'],
         relay_url=os.environ.get('PLENIPO_RELAY_URL', 'wss://relay.plenipo.dev'),
     )
     asyncio.run(skill.run_stdio())
+
+
+def load_mcp_config_from_env() -> None:
+    """Validates required MCP environment variables at startup."""
+    from plenipo.mcp.runtime import load_mcp_config_from_env as _load
+
+    _load()
 
 
 if __name__ == '__main__':
