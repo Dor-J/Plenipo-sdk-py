@@ -74,8 +74,39 @@ class PlenipoMCP:
 
         @server.call_tool()
         async def call_tool(name: str, arguments: dict | None) -> list[TextContent]:
-            _ = name, arguments
-            return [TextContent(type='text', text='Not implemented yet.')]
+            args = arguments or {}
+
+            if name == 'plenipo_discover':
+                from plenipo.discover import discover_agents
+
+                results = await discover_agents(
+                    query=args.get('query'),
+                    capability=args.get('capability'),
+                )
+                return [TextContent(type='text', text=str(results))]
+
+            if name == 'plenipo_did_create':
+                from plenipo.did import create_did_document
+
+                domain = args.get('domain', 'agent.local')
+                result = create_did_document(domain)
+                return [
+                    TextContent(
+                        type='text',
+                        text=str(
+                            {
+                                'did': result.did,
+                                'document': result.document,
+                                'privateKeys': {
+                                    'auth': result.auth_secret_b64,
+                                    'enc': result.enc_secret_b64,
+                                },
+                            }
+                        ),
+                    )
+                ]
+
+            return [TextContent(type='text', text=f'{name} requires programmatic client setup.')]
 
         return server
 
