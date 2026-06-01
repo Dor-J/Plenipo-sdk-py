@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "plenipo": {
+      "command": "ABSOLUTE_PATH_TO/Plenipo-sdk-py/.venv/Scripts/python.exe",
+      "args": ["-m", "plenipo.mcp"],
+      "cwd": "ABSOLUTE_PATH_TO/Plenipo-sdk-py",
+      "env": {
+        "PLENIPO_DID": "did:web:agent.example.com",
+        "PLENIPO_AUTH_SECRET_B64": "<from-operator-secrets>",
+        "PLENIPO_DID_DOCUMENT_URL": "https://agent.example.com/.well-known/did.json",
+        "PLENIPO_ENC_SECRET_B64": "<optional-for-receive-decrypt>",
+        "PLENIPO_RELAY_URL": "ws://localhost:4000/agent/websocket",
+        "PLENIPO_REGISTRY_URL": "http://localhost:4001"
+      }
+    }
+  }
+}
