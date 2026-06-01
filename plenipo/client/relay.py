@@ -6,12 +6,12 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 from urllib.parse import urlencode, urlparse
 
 import httpx
 import websockets
-from nacl.public import Box, PublicKey, SealedBox
+from nacl.public import PublicKey, SealedBox
 from nacl.signing import SigningKey
 
 from plenipo.crypto import base64url, signing_input
@@ -105,7 +105,12 @@ class PlenipoClient:
         asyncio.create_task(reader())
         await joined.wait()
 
-    async def send(self, recipient_did: str, plaintext: str, recipient_public_key: bytes) -> SendAck:
+    async def send(
+        self,
+        recipient_did: str,
+        plaintext: str,
+        recipient_public_key: bytes,
+    ) -> SendAck:
         """Sends a sealed encrypted envelope and returns the relay ack."""
         sealed = SealedBox(PublicKey(recipient_public_key)).encrypt(plaintext.encode('utf-8'))
         envelope_id = _generate_ulid()
@@ -126,27 +131,41 @@ class PlenipoClient:
         x402 = build_relay_payment(self.did, cost_tokens, envelope_id)
         ref = str(self._ref)
         self._ref += 1
-        return await self._request_reply(
+        ack = await self._request_reply(
             ref,
             'message.send',
             {'envelope': envelope, 'payment': {'x402': x402}},
         )
+        return cast(SendAck, ack)
 
     async def send_receipt(self, envelope_id: str) -> dict[str, Any]:
         """Sends a delivery receipt for a received envelope."""
         ref = str(self._ref)
         self._ref += 1
-        return await self._request_reply(ref, 'message.receipt', build_receipt(envelope_id))
+        return cast(
+            dict[str, Any],
+            await self._request_reply(ref, 'message.receipt', build_receipt(envelope_id)),
+        )
 
     async def get_delivery_status(self, envelope_id: str) -> dict[str, Any]:
         """Queries delivery status via the relay channel."""
         ref = str(self._ref)
         self._ref += 1
-        return await self._request_reply(
-            ref,
-            'delivery.get',
-            {'envelope_id': envelope_id},
+        return cast(
+            dict[str, Any],
+            await self._request_reply(
+                ref,
+                'delivery.get',
+                {'envelope_id': envelope_id},
+            ),
         )
+
+    async def get_balance(self) -> int:
+        """Queries current token balance via the relay channel."""
+        ref = str(self._ref)
+        self._ref += 1
+        payload = cast(dict[str, Any], await self._request_reply(ref, 'balance.get', {}))
+        return int(payload['balance'])
 
     async def _request_reply(self, ref: str, event: str, payload: dict[str, Any]) -> Any:
         loop = asyncio.get_running_loop()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 import httpx
 
@@ -31,7 +31,7 @@ async def get_delivery_status(relay_http_url: str, envelope_id: str) -> Delivery
     async with httpx.AsyncClient() as client:
         res = await client.get(f'{relay_http_url}/v1/delivery/{envelope_id}')
         res.raise_for_status()
-        return res.json()
+        return cast(DeliveryStatusResponse, res.json())
 
 
 def build_receipt(envelope_id: str) -> dict[str, str]:

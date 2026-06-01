@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -22,7 +22,7 @@ def encode_payment_payload(payload: dict[str, Any]) -> str:
 
 def parse_payment_required(header_value: str) -> dict[str, Any]:
     """Parses PAYMENT-REQUIRED header from a 402 response."""
-    return json.loads(base64url.decode(header_value).decode('utf-8'))
+    return cast(dict[str, Any], json.loads(base64url.decode(header_value).decode('utf-8')))
 
 
 def build_relay_payment(agent_did: str, cost_tokens: int, envelope_id: str) -> str:
@@ -74,7 +74,7 @@ async def purchase_bundle(
                 headers={PAYMENT_SIGNATURE: sig},
             )
         res.raise_for_status()
-        return res.json()
+        return cast(dict[str, Any], res.json())
 
 
 async def mandate_prepare(
@@ -85,4 +85,4 @@ async def mandate_prepare(
     async with httpx.AsyncClient() as client:
         res = await client.post(f'{relay_http_url.rstrip("/")}/operator/prepare', json=fields)
         res.raise_for_status()
-        return res.json()
+        return cast(dict[str, Any], res.json())

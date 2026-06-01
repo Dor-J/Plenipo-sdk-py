@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -31,7 +32,7 @@ class PlenipoMCP:
     def create_server(self) -> Server:
         server = Server('plenipo')
 
-        @server.list_tools()
+        @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
         async def list_tools() -> list[Tool]:
             return [
                 Tool(
@@ -110,8 +111,8 @@ class PlenipoMCP:
                 ),
             ]
 
-        @server.call_tool()
-        async def call_tool(name: str, arguments: dict | None) -> list[TextContent]:
+        @server.call_tool()  # type: ignore[untyped-decorator]
+        async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
             args = arguments or {}
 
             if name == 'plenipo_send':
@@ -198,17 +199,17 @@ class PlenipoMCP:
                 from plenipo.did import create_did_document
 
                 domain = args.get('domain', 'agent.local')
-                result = create_did_document(domain)
+                did_result = create_did_document(domain)
                 return [
                     TextContent(
                         type='text',
                         text=str(
                             {
-                                'did': result.did,
-                                'document': result.document,
+                                'did': did_result.did,
+                                'document': did_result.document,
                                 'privateKeys': {
-                                    'auth': result.auth_secret_b64,
-                                    'enc': result.enc_secret_b64,
+                                    'auth': did_result.auth_secret_b64,
+                                    'enc': did_result.enc_secret_b64,
                                 },
                             }
                         ),
@@ -227,7 +228,7 @@ class PlenipoMCP:
 
 def main() -> None:
     """Run the MCP server over stdio using environment variables."""
-    _ = load_mcp_config_from_env()
+    load_mcp_config_from_env()
     skill = PlenipoMCP(
         did_private_key=os.environ.get('PLENIPO_AUTH_SECRET_B64')
         or os.environ['PLENIPO_DID_PRIVATE_KEY'],
