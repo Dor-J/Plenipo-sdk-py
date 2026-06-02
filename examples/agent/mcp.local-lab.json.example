@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "plenipo-py-local-lab": {
+      "command": "ABSOLUTE_PATH_TO/Plenipo-sdk-py/.venv/Scripts/python.exe",
+      "args": ["-m", "plenipo.mcp"],
+      "cwd": "ABSOLUTE_PATH_TO/Plenipo-sdk-py",
+      "env": {
+        "PLENIPO_DID": "did:web:agents.example.com:local:python-a",
+        "PLENIPO_AUTH_SECRET_B64": "<from-this-laptop-private.env>",
+        "PLENIPO_ENC_SECRET_B64": "<from-this-laptop-private.env>",
+        "PLENIPO_DID_DOCUMENT_URL": "https://agents.example.com/local/python-a/did.json",
+        "PLENIPO_RELAY_URL": "ws://192.168.0.251:4000/agent/websocket",
+        "PLENIPO_REGISTRY_URL": "http://192.168.0.251:4001"
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@ import ipaddress
 import os
 import socket
 from typing import Any, cast
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
@@ -64,10 +64,15 @@ def enc_public_key_from_document(document: dict[str, Any], did: str) -> bytes:
 def _did_web_document_url(did: str) -> str | None:
     if not did.startswith('did:web:'):
         return None
-    path = did.removeprefix('did:web:').replace(':', '/')
-    host = path.split('/')[0]
-    rest = f'/{"/".join(path.split("/")[1:])}' if '/' in path else ''
-    return f'https://{host}{rest}/.well-known/did.json'
+    host, *path_segments = did.removeprefix('did:web:').split(':')
+    if not host or any(not segment for segment in path_segments):
+        return None
+
+    if not path_segments:
+        return f'https://{unquote(host)}/.well-known/did.json'
+
+    path = '/'.join(quote(unquote(segment), safe='') for segment in path_segments)
+    return f'https://{unquote(host)}/{path}/did.json'
 
 
 async def fetch_did_document(

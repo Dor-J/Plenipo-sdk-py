@@ -180,6 +180,22 @@ async def test_fetch_uses_did_web_fallback(monkeypatch: pytest.MonkeyPatch) -> N
     assert Client.calls == ['https://agent.example.com/.well-known/did.json']
 
 
+async def test_fetch_uses_path_based_did_web_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = create_did_document('agents.example.com', path_segments=['local', 'python-a'])
+    monkeypatch.setenv('PLENIPO_ALLOW_UNSAFE_DID_FETCH', 'true')
+    monkeypatch.setattr('httpx.AsyncClient', Client)
+    Client.responses = [Response(result.document)]
+    Client.calls = []
+
+    async def fake_discover(**_kwargs: object) -> list[dict[str, object]]:
+        return []
+
+    monkeypatch.setattr('plenipo.did.resolve.discover_agents', fake_discover)
+
+    assert await fetch_did_document(result.did) == result.document
+    assert Client.calls == ['https://agents.example.com/local/python-a/did.json']
+
+
 async def test_fetch_falls_back_to_relay_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
     did = 'did:web:agent.example.com'
     monkeypatch.setenv('PLENIPO_ALLOW_UNSAFE_DID_FETCH', 'true')
