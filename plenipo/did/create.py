@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 from urllib.parse import quote
 
+from plenipo.route_defaults import default_route_service_fields
 from nacl.public import PrivateKey
 from nacl.signing import SigningKey
 
@@ -80,7 +81,8 @@ def create_did_document(
                 'id': f'{did}#plenipo',
                 'type': 'PlenipoAgent',
                 'serviceEndpoint': relay_url,
-                'capabilities': ['general'],
+                'capabilities': ['general', 'mcp'],
+                **default_route_service_fields(),
             }
         ],
     }

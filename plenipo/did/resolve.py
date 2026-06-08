@@ -10,8 +10,6 @@ from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
-from plenipo.discover import discover_agents
-
 
 def _decode_multibase_x25519(multibase: str) -> bytes:
     import base58
@@ -75,6 +73,20 @@ def _did_web_document_url(did: str) -> str | None:
     return f'https://{unquote(host)}/{path}/did.json'
 
 
+def _core_hosted_document_url(relay_http_url: str, did: str) -> str:
+    return f'{relay_http_url.rstrip("/")}/v1/dids?did={quote(did, safe="")}'
+
+
+def _is_core_hosted_document_url(url: str, did: str, relay_http_url: str) -> bool:
+    if not did.startswith('did:web:localhost:agents:'):
+        return False
+
+    expected = _core_hosted_document_url(relay_http_url, did)
+    legacy_path = f'{relay_http_url.rstrip("/")}/v1/dids/{did}'
+    legacy_encoded_path = f'{relay_http_url.rstrip("/")}/v1/dids/{quote(did, safe="")}'
+    return url in {expected, legacy_path, legacy_encoded_path}
+
+
 async def fetch_did_document(
     recipient_did: str,
     *,
@@ -85,12 +97,18 @@ async def fetch_did_document(
     """Fetches a DID document using registry, did:web, or relay resolver."""
     if recipient_document_url:
         async with httpx.AsyncClient() as client:
-            await _validate_document_url_for_did(recipient_document_url, recipient_did)
+            await _validate_document_url_for_did(
+                recipient_document_url,
+                recipient_did,
+                relay_http_url=relay_http_url,
+            )
             res = await client.get(recipient_document_url, follow_redirects=False, timeout=5.0)
             res.raise_for_status()
             return cast(dict[str, Any], res.json())
 
     try:
+        from plenipo.discover import discover_agents
+
         results = await discover_agents(
             query=recipient_did,
             limit=5,
@@ -100,7 +118,11 @@ async def fetch_did_document(
             if row.get('did') == recipient_did and row.get('document_url'):
                 async with httpx.AsyncClient() as client:
                     document_url = str(row['document_url'])
-                    await _validate_document_url_for_did(document_url, recipient_did)
+                    await _validate_document_url_for_did(
+                        document_url,
+                        recipient_did,
+                        relay_http_url=relay_http_url,
+                    )
                     res = await client.get(document_url, follow_redirects=False, timeout=5.0)
                     res.raise_for_status()
                     return cast(dict[str, Any], res.json())
@@ -111,7 +133,11 @@ async def fetch_did_document(
     if web_url:
         try:
             async with httpx.AsyncClient() as client:
-                await _validate_document_url_for_did(web_url, recipient_did)
+                await _validate_document_url_for_did(
+                    web_url,
+                    recipient_did,
+                    relay_http_url=relay_http_url,
+                )
                 res = await client.get(web_url, follow_redirects=False, timeout=5.0)
                 res.raise_for_status()
                 return cast(dict[str, Any], res.json())
@@ -120,7 +146,7 @@ async def fetch_did_document(
 
     async with httpx.AsyncClient() as client:
         res = await client.get(
-            f'{relay_http_url}/v1/dids/{quote(recipient_did, safe="")}',
+            _core_hosted_document_url(relay_http_url, recipient_did),
             follow_redirects=False,
             timeout=5.0,
         )
@@ -128,20 +154,26 @@ async def fetch_did_document(
         return cast(dict[str, Any], res.json())
 
 
-async def _validate_document_url_for_did(url: str, did: str) -> None:
+async def _validate_document_url_for_did(
+    url: str,
+    did: str,
+    *,
+    relay_http_url: str = 'http://localhost:4000',
+) -> None:
     allow_unsafe = os.environ.get('PLENIPO_ALLOW_UNSAFE_DID_FETCH') == 'true'
+    core_hosted = _is_core_hosted_document_url(url, did, relay_http_url)
     expected = _did_web_document_url(did)
-    if expected is None:
+    if expected is None and not core_hosted:
         raise ValueError(f'Unsupported DID method for direct document fetch: {did}')
 
     parsed = urlparse(url)
-    if not allow_unsafe and parsed.scheme != 'https':
+    if not allow_unsafe and parsed.scheme != 'https' and not core_hosted:
         raise ValueError('DID document URL must use https')
 
-    if not allow_unsafe and url != expected:
+    if not allow_unsafe and not core_hosted and url != expected:
         raise ValueError('DID document URL does not match did:web document URL')
 
-    if not allow_unsafe:
+    if not allow_unsafe and not core_hosted:
         await _assert_public_host(parsed.hostname or '')
 
 

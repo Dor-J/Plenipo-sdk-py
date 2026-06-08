@@ -52,7 +52,9 @@ async def test_discover_agents_sends_query_params() -> None:
         registry_url='https://registry.example',
     )
 
-    assert results == [{'did': 'did:web:agent.local'}]
+    assert len(results) == 1
+    assert results[0]['did'] == 'did:web:agent.local'
+    assert results[0]['protocols'] == ['plenipo.message.v1']
     assert FakeAsyncClient.calls == [
         (
             'https://registry.example/api/v1/search',

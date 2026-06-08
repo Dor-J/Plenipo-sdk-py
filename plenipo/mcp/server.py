@@ -44,6 +44,7 @@ class PlenipoMCP:
                         'properties': {
                             'recipient_did': {'type': 'string'},
                             'message': {'type': 'string'},
+                            'recipient_document_url': {'type': 'string'},
                             'priority': {
                                 'type': 'string',
                                 'enum': ['low', 'normal', 'high'],
@@ -59,8 +60,19 @@ class PlenipoMCP:
                 ),
                 Tool(
                     name='plenipo_discover',
-                    description='Search the DID registry for agents',
-                    inputSchema={'type': 'object', 'properties': {}},
+                    description='Search the DID registry for Route Records',
+                    inputSchema={
+                        'type': 'object',
+                        'properties': {
+                            'query': {'type': 'string'},
+                            'capability': {'type': 'string'},
+                            'protocol': {'type': 'string'},
+                            'payment_scheme': {'type': 'string'},
+                            'max_price_per_kb_tokens': {'type': 'integer'},
+                            'online': {'type': 'boolean'},
+                            'limit': {'type': 'integer'},
+                        },
+                    },
                 ),
                 Tool(
                     name='plenipo_balance',
@@ -81,6 +93,26 @@ class PlenipoMCP:
                     name='plenipo_sync_identity',
                     description='Register or retry Core sync for the local agent identity',
                     inputSchema={'type': 'object', 'properties': {}},
+                ),
+                Tool(
+                    name='plenipo_declare_route',
+                    description='Declare or update agent Route Record metadata in Core-hosted DID',
+                    inputSchema={
+                        'type': 'object',
+                        'properties': {
+                            'protocols': {
+                                'type': 'array',
+                                'items': {'type': 'string'},
+                            },
+                            'capabilities': {
+                                'type': 'array',
+                                'items': {'type': 'string'},
+                            },
+                            'payment': {'type': 'object'},
+                            'limits': {'type': 'object'},
+                            'replace': {'type': 'boolean'},
+                        },
+                    },
                 ),
                 Tool(
                     name='plenipo_declare_capabilities',
@@ -150,7 +182,7 @@ class PlenipoMCP:
                     args['message'],
                     args.get('recipient_document_url'),
                 )
-                return [TextContent(type='text', text=str(ack))]
+                return [TextContent(type='text', text=json.dumps(ack, indent=2))]
 
             if name == 'plenipo_receive':
                 from plenipo.mcp.runtime import get_mcp_runtime
@@ -170,6 +202,9 @@ class PlenipoMCP:
                         'plaintext': m.plaintext,
                         'ciphertext': m.ciphertext,
                         'received_at': m.received_at_iso,
+                        'ciphertext_bytes': m.ciphertext_bytes,
+                        'billable_kb': m.billable_kb,
+                        'charged_tokens': m.charged_tokens,
                     }
                     for m in messages
                 ]
@@ -187,8 +222,13 @@ class PlenipoMCP:
                 results = await discover_agents(
                     query=args.get('query'),
                     capability=args.get('capability'),
+                    protocol=args.get('protocol'),
+                    payment_scheme=args.get('payment_scheme'),
+                    max_price_per_kb_tokens=args.get('max_price_per_kb_tokens'),
+                    online=args.get('online'),
+                    limit=int(args.get('limit', 20)),
                 )
-                return [TextContent(type='text', text=str(results))]
+                return [TextContent(type='text', text=json.dumps(results, indent=2))]
 
             if name == 'plenipo_purchase_bundle':
                 from plenipo.payments import purchase_bundle
@@ -244,8 +284,10 @@ class PlenipoMCP:
 
             if name == 'plenipo_identity':
                 from plenipo.identity.provision import ensure_identity
+                from plenipo.identity.route import route_from_document
 
                 identity = await ensure_identity()
+                route = route_from_document(identity.document)
                 payload = {
                     'did': identity.did,
                     'did_document_url': identity.did_document_url,
@@ -256,6 +298,16 @@ class PlenipoMCP:
                     'relay_url': identity.relay_url,
                     'registry_url': identity.registry_url,
                     'core_url': identity.core_url,
+                    'route': {
+                        'protocols': route['protocols'],
+                        'capabilities': route['capabilities'],
+                        'encryption': {
+                            'alg': route['encryption']['alg'],
+                            'public_key_ref': route['encryption']['publicKeyRef'],
+                        },
+                        'payment': route['payment'],
+                        'limits': route['limits'],
+                    },
                 }
                 return [TextContent(type='text', text=json.dumps(payload, indent=2))]
 
@@ -291,6 +343,36 @@ class PlenipoMCP:
                 _, result = await sync_identity_with_core(identity)
                 return [
                     TextContent(type='text', text=json.dumps(sync_result_to_dict(result), indent=2))
+                ]
+
+            if name == 'plenipo_declare_route':
+                from plenipo.identity.route import declare_route
+
+                updated = await declare_route(
+                    protocols=[str(p) for p in args['protocols']] if args.get('protocols') else None,
+                    capabilities=[str(c) for c in args['capabilities']]
+                    if args.get('capabilities')
+                    else None,
+                    payment=args.get('payment'),
+                    limits=args.get('limits'),
+                    replace=bool(args.get('replace', False)),
+                )
+                from plenipo.identity.route import route_from_document
+
+                route = route_from_document(updated.document)
+                return [
+                    TextContent(
+                        type='text',
+                        text=json.dumps(
+                            {
+                                'did': updated.did,
+                                'route': route,
+                                'core_registered': updated.core_registered,
+                                'registration_pending': updated.registration_pending,
+                            },
+                            indent=2,
+                        ),
+                    )
                 ]
 
             if name == 'plenipo_declare_capabilities':

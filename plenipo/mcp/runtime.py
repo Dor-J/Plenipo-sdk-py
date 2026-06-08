@@ -39,6 +39,11 @@ class BufferedMessage:
     ciphertext: str | None = None
     plaintext: str | None = None
     receipt_received_at: str | None = None
+    ciphertext_bytes: int | None = None
+    billable_kb: int | None = None
+    charged_tokens: int | None = None
+    balance_after: int | None = None
+    delivered_at: str | None = None
 
 
 def load_mcp_config_from_env() -> McpRuntimeConfig:
@@ -124,8 +129,15 @@ class McpRuntime:
                     BufferedMessage(
                         kind='receipt',
                         envelope_id=str(payload.get('envelope_id', '')),
+                        sender_did=payload.get('sender_did'),
+                        recipient_did=payload.get('recipient_did'),
                         receipt_received_at=payload.get('received_at'),
                         received_at_iso=datetime.now(timezone.utc).isoformat(),
+                        ciphertext_bytes=_optional_int(payload.get('ciphertext_bytes')),
+                        billable_kb=_optional_int(payload.get('billable_kb')),
+                        charged_tokens=_optional_int(payload.get('charged_tokens')),
+                        balance_after=_optional_int(payload.get('balance_after')),
+                        delivered_at=payload.get('delivered_at'),
                     )
                 )
 
@@ -202,3 +214,9 @@ def reset_mcp_runtime() -> None:
     """Resets runtime singleton (for tests)."""
     global _default_runtime
     _default_runtime = None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)

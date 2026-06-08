@@ -110,6 +110,42 @@ async def test_runtime_connects_once_buffers_messages_and_receipts(
     assert [entry.kind for entry in drained] == ['deliver', 'receipt']
 
 
+async def test_runtime_buffers_receipt_billing_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('plenipo.mcp.runtime.PlenipoClient', FakeClient)
+
+    runtime = McpRuntime(
+        McpRuntimeConfig(
+            did='did:web:test.local',
+            auth_secret_b64='AAAA',
+            did_document_url='https://test.local/.well-known/did.json',
+            relay_url='ws://localhost:4000/agent/websocket',
+        )
+    )
+    client = await runtime.ensure_connected()
+    assert client.receipt_handler is not None
+    client.receipt_handler(
+        {
+            'envelope_id': '01MSG',
+            'sender_did': 'did:web:sender.local',
+            'recipient_did': 'did:web:test.local',
+            'received_at': '2026-06-08T00:00:00Z',
+            'delivered_at': '2026-06-08T00:00:01Z',
+            'ciphertext_bytes': 105,
+            'billable_kb': 1,
+            'charged_tokens': 1,
+            'balance_after': 999,
+        }
+    )
+
+    receipt = runtime.drain_messages(limit=1)[0]
+    assert receipt.kind == 'receipt'
+    assert receipt.ciphertext_bytes == 105
+    assert receipt.billable_kb == 1
+    assert receipt.charged_tokens == 1
+    assert receipt.balance_after == 999
+    assert receipt.delivered_at == '2026-06-08T00:00:01Z'
+
+
 async def test_runtime_send_and_balance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr('plenipo.mcp.runtime.PlenipoClient', FakeClient)
 

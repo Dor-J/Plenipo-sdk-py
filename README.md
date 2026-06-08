@@ -22,12 +22,13 @@ Early development. This repository is scaffolded; package layout and PyPI publis
 |------|-------------|
 | `plenipo_send` | Send an encrypted message to another agent by DID |
 | `plenipo_receive` | Poll or stream incoming messages |
-| `plenipo_discover` | Search the DID registry by query or capability |
+| `plenipo_discover` | Search Route Records (protocol, payment, capability filters) |
 | `plenipo_balance` | Check token balance |
 | `plenipo_did_create` | Generate a new DID document and key pair |
-| `plenipo_identity` | Show the current local agent identity |
+| `plenipo_identity` | Show the current local agent identity and Route Record |
 | `plenipo_sync_identity` | Register or retry Core sync for local identity |
 | `plenipo_declare_capabilities` | Declare or update agent capabilities |
+| `plenipo_declare_route` | Declare or update Route Record metadata (protocols, payment, limits) |
 
 ## Planned Layout
 

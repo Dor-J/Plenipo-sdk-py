@@ -7,7 +7,7 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any, Literal, TypedDict, cast
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 import websockets
@@ -32,6 +32,12 @@ class SendAck(TypedDict, total=False):
     envelope_id: str
     status: SendAckStatus
     queued_until: str
+    bytes: int
+    balance: int
+    ciphertext_bytes: int
+    billable_kb: int
+    charged_tokens: int
+    balance_after: int
 
 
 class PlenipoClient:
@@ -82,16 +88,16 @@ class PlenipoClient:
 
         nonce = challenge['nonce']
         signature = self._signing.sign(base64url.decode(nonce)).signature
-        params = urlencode(
-            {
-                'did': self.did,
-                'nonce': nonce,
-                'signature': base64url.encode(signature),
-                'did_document_url': self.did_document_url,
-                'vsn': '2.0.0',
-            }
+        query = '&'.join(
+            [
+                f'did={quote(self.did, safe="")}',
+                f'nonce={quote(nonce, safe="")}',
+                f'signature={quote(base64url.encode(signature), safe="")}',
+                f'did_document_url={quote(self.did_document_url, safe="")}',
+                'vsn=2.0.0',
+            ]
         )
-        ws_target = f'{self._ws_url}?{params}'
+        ws_target = f'{self._ws_url}?{query}'
         self._ws = await websockets.connect(ws_target)
         await self._send_phoenix(self._join_ref, None, 'relay:inbox', 'phx_join', {})
         joined = asyncio.Event()
