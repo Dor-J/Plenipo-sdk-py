@@ -15,9 +15,18 @@ REGISTER_TYPE = 'plenipo.did.register'
 REGISTER_VERSION = '1.0'
 
 
+def _canonicalize(value: Any) -> Any:
+    """Recursively sorts dict keys for deterministic JSON encoding."""
+    if isinstance(value, dict):
+        return {key: _canonicalize(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_canonicalize(item) for item in value]
+    return value
+
+
 def document_fingerprint(document: dict[str, Any]) -> str:
     """Computes a SHA-256 fingerprint for a DID document."""
-    encoded = json.dumps(document, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    encoded = json.dumps(_canonicalize(document), separators=(',', ':')).encode('utf-8')
     return hashlib.sha256(encoded).hexdigest()
 
 

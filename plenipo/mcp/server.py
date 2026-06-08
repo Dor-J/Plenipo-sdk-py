@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -245,24 +246,18 @@ class PlenipoMCP:
                 from plenipo.identity.provision import ensure_identity
 
                 identity = await ensure_identity()
-                return [
-                    TextContent(
-                        type='text',
-                        text=str(
-                            {
-                                'did': identity.did,
-                                'did_document_url': identity.did_document_url,
-                                'did_document_mode': identity.did_document_mode,
-                                'core_registered': identity.core_registered,
-                                'registration_pending': identity.registration_pending,
-                                'capabilities': identity.capabilities,
-                                'relay_url': identity.relay_url,
-                                'registry_url': identity.registry_url,
-                                'core_url': identity.core_url,
-                            }
-                        ),
-                    )
-                ]
+                payload = {
+                    'did': identity.did,
+                    'did_document_url': identity.did_document_url,
+                    'did_document_mode': identity.did_document_mode,
+                    'core_registered': identity.core_registered,
+                    'registration_pending': identity.registration_pending,
+                    'capabilities': identity.capabilities,
+                    'relay_url': identity.relay_url,
+                    'registry_url': identity.registry_url,
+                    'core_url': identity.core_url,
+                }
+                return [TextContent(type='text', text=json.dumps(payload, indent=2))]
 
             if name == 'plenipo_sync_identity':
                 from plenipo.identity.provision import ensure_identity
@@ -277,7 +272,7 @@ class PlenipoMCP:
                     return [
                         TextContent(
                             type='text',
-                            text=str(
+                            text=json.dumps(
                                 sync_result_to_dict(
                                     SyncIdentityResult(
                                         ok=True,
@@ -287,13 +282,16 @@ class PlenipoMCP:
                                         document_fingerprint=identity.document_fingerprint,
                                         warnings=['External identity; Core sync not required'],
                                     )
-                                )
+                                ),
+                                indent=2,
                             ),
                         )
                     ]
 
                 _, result = await sync_identity_with_core(identity)
-                return [TextContent(type='text', text=str(sync_result_to_dict(result)))]
+                return [
+                    TextContent(type='text', text=json.dumps(sync_result_to_dict(result), indent=2))
+                ]
 
             if name == 'plenipo_declare_capabilities':
                 from plenipo.identity.capabilities import declare_capabilities
@@ -305,11 +303,14 @@ class PlenipoMCP:
                 return [
                     TextContent(
                         type='text',
-                        text=str(
+                        text=json.dumps(
                             {
                                 'did': updated.did,
                                 'capabilities': updated.capabilities,
-                            }
+                                'core_registered': updated.core_registered,
+                                'registration_pending': updated.registration_pending,
+                            },
+                            indent=2,
                         ),
                     )
                 ]

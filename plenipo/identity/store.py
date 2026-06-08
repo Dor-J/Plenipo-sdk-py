@@ -53,6 +53,11 @@ def load_identity(path: Path | None = None) -> AgentIdentity | None:
         return None
 
     raw = json.loads(target.read_text(encoding='utf-8'))
+    raw_mode = str(raw.get('did_document_mode', 'core_hosted'))
+    did_document_mode: DidDocumentMode = (
+        raw_mode if raw_mode in ('core_hosted', 'external') else 'core_hosted'
+    )
+
     return AgentIdentity(
         did=str(raw['did']),
         auth_secret_b64=str(raw['auth_secret_b64']),
@@ -64,7 +69,7 @@ def load_identity(path: Path | None = None) -> AgentIdentity | None:
         capabilities=list(raw.get('capabilities', [])),
         created_at=str(raw.get('created_at', '')),
         document=dict(raw['document']),
-        did_document_mode=str(raw.get('did_document_mode', 'core_hosted')),
+        did_document_mode=did_document_mode,
         core_registered=bool(raw.get('core_registered', True)),
         registration_pending=bool(raw.get('registration_pending', False)),
         last_registration_error=raw.get('last_registration_error'),

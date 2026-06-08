@@ -25,6 +25,9 @@ async def test_mcp_server_tool_handlers(monkeypatch) -> None:  # type: ignore[no
         'plenipo_mandate_prepare',
         'plenipo_delivery_status',
         'plenipo_did_create',
+        'plenipo_identity',
+        'plenipo_sync_identity',
+        'plenipo_declare_capabilities',
     }
 
     class Runtime:
@@ -110,6 +113,42 @@ async def test_mcp_server_tool_handlers(monkeypatch) -> None:  # type: ignore[no
     )
     assert 'delivered' in await call('plenipo_delivery_status', {'envelope_id': '01J'})
     assert 'did:web:agent.local' in await call('plenipo_did_create', {'domain': 'agent.local'})
+
+    async def fake_ensure_identity():
+        from plenipo.identity.store import identity_from_create_result
+
+        return identity_from_create_result(
+            did='did:web:localhost:agents:mcp',
+            auth_secret_b64='AUTH',
+            enc_secret_b64='ENC',
+            did_document_url='http://localhost:4000/v1/dids/did%3Aweb%3Alocalhost%3Aagents%3Amcp',
+            document={'id': 'did:web:localhost:agents:mcp', 'service': []},
+            relay_url='ws://localhost:4000/agent/websocket',
+            registry_url='http://localhost:4001',
+            core_url='http://localhost:4000',
+            core_registered=True,
+            registration_pending=False,
+        )
+
+    async def fake_sync(_identity):
+        from plenipo.identity.sync import SyncIdentityResult
+
+        return _identity, SyncIdentityResult(
+            ok=True,
+            did='did:web:localhost:agents:mcp',
+            core_registered=True,
+            registration_pending=False,
+            document_fingerprint='fp',
+            warnings=[],
+        )
+
+    monkeypatch.setattr('plenipo.identity.provision.ensure_identity', fake_ensure_identity)
+    monkeypatch.setattr('plenipo.identity.sync.sync_identity_with_core', fake_sync)
+
+    identity_text = await call('plenipo_identity')
+    assert '"core_registered": true' in identity_text
+    sync_text = await call('plenipo_sync_identity')
+    assert '"ok": true' in sync_text
     assert 'requires programmatic client setup' in await call('unknown_tool')
 
 

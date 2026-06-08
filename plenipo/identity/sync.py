@@ -10,6 +10,7 @@ import httpx
 from plenipo.identity.register import register_document
 from plenipo.identity.register_signing import document_fingerprint
 from plenipo.identity.store import AgentIdentity, save_identity
+from plenipo.identity.sync_errors import sync_warnings_from_error
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,7 @@ async def sync_identity_with_core(identity: AgentIdentity) -> tuple[AgentIdentit
             document_fingerprint=updated.document_fingerprint,
             warnings=warnings,
         )
-    except (httpx.HTTPError, httpx.TimeoutException, ValueError) as exc:
+    except (httpx.HTTPError, httpx.TimeoutException, ValueError, ConnectionError, OSError) as exc:
         pending = AgentIdentity(
             did=identity.did,
             auth_secret_b64=identity.auth_secret_b64,
@@ -80,7 +81,7 @@ async def sync_identity_with_core(identity: AgentIdentity) -> tuple[AgentIdentit
             document_fingerprint=fingerprint,
         )
         save_identity(pending)
-        warnings.append('Core unavailable')
+        warnings.extend(sync_warnings_from_error(exc))
         return pending, SyncIdentityResult(
             ok=False,
             did=pending.did,
