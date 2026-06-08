@@ -43,25 +43,40 @@ class BufferedMessage:
 
 def load_mcp_config_from_env() -> McpRuntimeConfig:
     """Loads MCP agent configuration from environment variables."""
+    from plenipo.identity.provision import identity_to_mcp_config
+    from plenipo.identity.store import load_identity
+
     did = os.environ.get('PLENIPO_DID')
     auth = os.environ.get('PLENIPO_AUTH_SECRET_B64') or os.environ.get('PLENIPO_DID_PRIVATE_KEY')
     doc_url = os.environ.get('PLENIPO_DID_DOCUMENT_URL')
     relay = os.environ.get('PLENIPO_RELAY_URL', 'ws://localhost:4000/agent/websocket')
 
-    if not did or not auth or not doc_url:
-        raise RuntimeError(
-            'Missing MCP env: PLENIPO_DID, PLENIPO_AUTH_SECRET_B64 (or PLENIPO_DID_PRIVATE_KEY), '
-            'PLENIPO_DID_DOCUMENT_URL'
+    if did and auth and doc_url:
+        return McpRuntimeConfig(
+            did=did,
+            auth_secret_b64=auth,
+            did_document_url=doc_url,
+            relay_url=relay,
+            enc_secret_b64=os.environ.get('PLENIPO_ENC_SECRET_B64'),
+            registry_url=os.environ.get('PLENIPO_REGISTRY_URL'),
         )
 
-    return McpRuntimeConfig(
-        did=did,
-        auth_secret_b64=auth,
-        did_document_url=doc_url,
-        relay_url=relay,
-        enc_secret_b64=os.environ.get('PLENIPO_ENC_SECRET_B64'),
-        registry_url=os.environ.get('PLENIPO_REGISTRY_URL'),
+    stored = load_identity()
+    if stored is not None:
+        return identity_to_mcp_config(stored)
+
+    raise RuntimeError(
+        'Missing MCP identity: set PLENIPO_DID, PLENIPO_AUTH_SECRET_B64, '
+        'PLENIPO_DID_DOCUMENT_URL or run ensure_identity() before connecting'
     )
+
+
+async def load_mcp_config() -> McpRuntimeConfig:
+    """Loads MCP config from env, identity.json, or auto-provision."""
+    from plenipo.identity.provision import ensure_identity, identity_to_mcp_config
+
+    identity = await ensure_identity()
+    return identity_to_mcp_config(identity)
 
 
 @dataclass
@@ -175,6 +190,12 @@ def get_mcp_runtime() -> McpRuntime:
     if _default_runtime is None:
         _default_runtime = McpRuntime(load_mcp_config_from_env())
     return _default_runtime
+
+
+def set_mcp_runtime(runtime: McpRuntime) -> None:
+    """Sets the process-wide MCP runtime."""
+    global _default_runtime
+    _default_runtime = runtime
 
 
 def reset_mcp_runtime() -> None:

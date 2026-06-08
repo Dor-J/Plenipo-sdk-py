@@ -72,6 +72,26 @@ class PlenipoMCP:
                     inputSchema={'type': 'object', 'properties': {}},
                 ),
                 Tool(
+                    name='plenipo_identity',
+                    description='Show the current local agent identity',
+                    inputSchema={'type': 'object', 'properties': {}},
+                ),
+                Tool(
+                    name='plenipo_declare_capabilities',
+                    description='Declare or update agent capabilities in Core-hosted DID',
+                    inputSchema={
+                        'type': 'object',
+                        'properties': {
+                            'capabilities': {
+                                'type': 'array',
+                                'items': {'type': 'string'},
+                            },
+                            'replace': {'type': 'boolean'},
+                        },
+                        'required': ['capabilities'],
+                    },
+                ),
+                Tool(
                     name='plenipo_purchase_bundle',
                     description='Purchase a token bundle via x402',
                     inputSchema={
@@ -216,6 +236,45 @@ class PlenipoMCP:
                     )
                 ]
 
+            if name == 'plenipo_identity':
+                from plenipo.identity.provision import ensure_identity
+
+                identity = await ensure_identity()
+                return [
+                    TextContent(
+                        type='text',
+                        text=str(
+                            {
+                                'did': identity.did,
+                                'did_document_url': identity.did_document_url,
+                                'capabilities': identity.capabilities,
+                                'relay_url': identity.relay_url,
+                                'registry_url': identity.registry_url,
+                                'core_url': identity.core_url,
+                            }
+                        ),
+                    )
+                ]
+
+            if name == 'plenipo_declare_capabilities':
+                from plenipo.identity.capabilities import declare_capabilities
+
+                updated = await declare_capabilities(
+                    [str(cap) for cap in args['capabilities']],
+                    replace=bool(args.get('replace', False)),
+                )
+                return [
+                    TextContent(
+                        type='text',
+                        text=str(
+                            {
+                                'did': updated.did,
+                                'capabilities': updated.capabilities,
+                            }
+                        ),
+                    )
+                ]
+
             return [TextContent(type='text', text=f'{name} requires programmatic client setup.')]
 
         return server
@@ -226,19 +285,31 @@ class PlenipoMCP:
             await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
+async def bootstrap_mcp_runtime() -> None:
+    """Ensures identity exists and initializes the MCP runtime."""
+    from plenipo.mcp.runtime import McpRuntime, load_mcp_config, set_mcp_runtime
+
+    config = await load_mcp_config()
+    set_mcp_runtime(McpRuntime(config))
+
+
 def main() -> None:
-    """Run the MCP server over stdio using environment variables."""
-    load_mcp_config_from_env()
+    """Run the MCP server over stdio with agent-first identity bootstrap."""
+    asyncio.run(_main_async())
+
+
+async def _main_async() -> None:
+    await bootstrap_mcp_runtime()
+    relay_url = os.environ.get('PLENIPO_RELAY_URL', 'ws://localhost:4000/agent/websocket')
     skill = PlenipoMCP(
-        did_private_key=os.environ.get('PLENIPO_AUTH_SECRET_B64')
-        or os.environ['PLENIPO_DID_PRIVATE_KEY'],
-        relay_url=os.environ.get('PLENIPO_RELAY_URL', 'wss://relay.plenipo.dev'),
+        did_private_key=os.environ.get('PLENIPO_AUTH_SECRET_B64', 'bootstrap'),
+        relay_url=relay_url,
     )
-    asyncio.run(skill.run_stdio())
+    await skill.run_stdio()
 
 
 def load_mcp_config_from_env() -> None:
-    """Validates required MCP environment variables at startup."""
+    """Validates MCP configuration from env or identity.json at startup."""
     from plenipo.mcp.runtime import load_mcp_config_from_env as _load
 
     _load()
