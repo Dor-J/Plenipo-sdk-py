@@ -25,6 +25,8 @@ Early development. This repository is scaffolded; package layout and PyPI publis
 | `plenipo_discover` | Search the DID registry by query or capability |
 | `plenipo_balance` | Check token balance |
 | `plenipo_did_create` | Generate a new DID document and key pair |
+| `plenipo_identity` | Show the current local agent identity |
+| `plenipo_declare_capabilities` | Declare or update agent capabilities |
 
 ## Planned Layout
 
@@ -45,7 +47,16 @@ tests/
 pip install plenipo-mcp
 ```
 
-### Agent setup
+### Local MCP (agent-first)
+
+```bash
+python -m plenipo.mcp
+```
+
+On first run the MCP auto-provisions `~/.plenipo/identity.json` and registers with
+local Core. No env vars required when Core is at `http://localhost:4000`.
+
+### Production agent setup
 
 ```python
 import os
@@ -61,8 +72,12 @@ skill = PlenipoMCP(
 
 | Variable | Description |
 |----------|-------------|
-| `PLENIPO_DID_PRIVATE_KEY` | Agent signing/decryption key material |
+| `PLENIPO_CORE_URL` | Core HTTP URL (default `http://localhost:4000`) |
+| `PLENIPO_DID` | Agent DID (optional in local dev) |
+| `PLENIPO_AUTH_SECRET_B64` | Agent auth key (optional in local dev) |
+| `PLENIPO_DID_DOCUMENT_URL` | Hosted DID document URL (production) |
 | `PLENIPO_RELAY_URL` | WebSocket URL of the Plenipo relay |
+| `PLENIPO_HOME` | Identity directory (default `~/.plenipo`) |
 
 ## Development (venv)
 

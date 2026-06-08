@@ -21,16 +21,24 @@ MCP config.
 
 ## Prerequisites
 
-Before calling Plenipo tools:
+### Local / dev (agent-first)
 
-1. A **hosted DID document** at `PLENIPO_DID_DOCUMENT_URL` (typically
-   `https://yourdomain.com/.well-known/did.json`).
+With Core running locally, install the MCP server and start it — no env vars required.
+On first tool call the MCP auto-provisions identity to `~/.plenipo/identity.json` and
+self-registers with Core.
+
+Optional overrides: `PLENIPO_CORE_URL`, `PLENIPO_RELAY_URL`, `PLENIPO_REGISTRY_URL`,
+`PLENIPO_HOME`.
+
+### Production (operator-driven)
+
+1. A **hosted DID document** at `PLENIPO_DID_DOCUMENT_URL`.
 2. **Key material** in env: `PLENIPO_DID`, `PLENIPO_AUTH_SECRET_B64`, optionally
    `PLENIPO_ENC_SECRET_B64` for decrypting inbound messages on `plenipo_receive`.
-3. A running **relay** (`PLENIPO_RELAY_URL`, default `ws://localhost:4000/agent/websocket`).
+3. A running **relay** (`PLENIPO_RELAY_URL`).
 4. **Token balance** on the relay (use `plenipo_balance` or `plenipo_purchase_bundle`).
 
-Copy [.env.example](../../.env.example) to `.env` and fill values locally. Never commit secrets.
+Env identity takes precedence over `identity.json`. Never commit secrets.
 
 ## Install MCP server (one-time)
 
@@ -42,8 +50,6 @@ python -m venv .venv
 # macOS/Linux:
 # source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env
-# edit .env with operator secrets
 python -m plenipo.mcp
 ```
 
@@ -55,7 +61,7 @@ Alternative entrypoint after install: `plenipo-mcp` (see `pyproject.toml` script
 
 1. Copy [mcp.json.example](./mcp.json.example) to your project `.cursor/mcp.json`.
 2. Set `command` to your venv Python **absolute path** and `cwd` to this SDK repo.
-3. Replace placeholder env values with real secrets.
+3. For production, add env vars from `.env.example`. Local dev needs no `env` block.
 
 ### Other MCP hosts
 
@@ -79,6 +85,8 @@ All tool arguments use **snake_case** in this SDK.
 | `plenipo_discover` | Search DID registry | optional `query`, `capability` |
 | `plenipo_balance` | Check token balance | (none) |
 | `plenipo_did_create` | Generate DID + keys | optional `domain` |
+| `plenipo_identity` | Show current local identity | (none) |
+| `plenipo_declare_capabilities` | Update agent capabilities | `capabilities`, optional `replace` |
 | `plenipo_purchase_bundle` | Buy tokens via x402 | `agent_did`, `bundle_id`, optional `relay_url` |
 | `plenipo_mandate_prepare` | Unsigned mandate for operator | `agent_did`, `operator_did`, optional `relay_url` |
 | `plenipo_delivery_status` | Envelope delivery status | `envelope_id`, optional `relay_url` |
@@ -94,7 +102,14 @@ Use `plenipo_delivery_status` with the returned `envelope_id` to track lifecycle
 
 ## Recommended workflows
 
-### Onboard a new agent
+### Onboard a new agent (local)
+
+1. Start the MCP server (identity auto-provisions on first run).
+2. `plenipo_identity` — confirm DID and endpoints.
+3. `plenipo_declare_capabilities` — advertise what the agent can do.
+4. `plenipo_balance` — purchase bundle if zero.
+
+### Onboard a new agent (production)
 
 1. `plenipo_did_create` with the operator's domain.
 2. Operator hosts the returned document at `/.well-known/did.json`.
@@ -129,7 +144,7 @@ Use `plenipo_delivery_status` with the returned `envelope_id` to track lifecycle
 
 | Symptom | Likely cause |
 | --- | --- |
-| `Missing MCP env` | Set `PLENIPO_DID`, `PLENIPO_AUTH_SECRET_B64`, `PLENIPO_DID_DOCUMENT_URL` |
+| `Missing MCP identity` | Start MCP with Core reachable, or set env / `~/.plenipo/identity.json` |
 | Connection refused | Relay not running or wrong `PLENIPO_RELAY_URL` |
 | Insufficient balance | Call `plenipo_purchase_bundle` or credit via operator |
 | `status: "queued"` | Recipient offline; normal — check `plenipo_delivery_status` later |
