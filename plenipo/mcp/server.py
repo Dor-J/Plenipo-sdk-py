@@ -77,6 +77,11 @@ class PlenipoMCP:
                     inputSchema={'type': 'object', 'properties': {}},
                 ),
                 Tool(
+                    name='plenipo_sync_identity',
+                    description='Register or retry Core sync for the local agent identity',
+                    inputSchema={'type': 'object', 'properties': {}},
+                ),
+                Tool(
                     name='plenipo_declare_capabilities',
                     description='Declare or update agent capabilities in Core-hosted DID',
                     inputSchema={
@@ -247,6 +252,9 @@ class PlenipoMCP:
                             {
                                 'did': identity.did,
                                 'did_document_url': identity.did_document_url,
+                                'did_document_mode': identity.did_document_mode,
+                                'core_registered': identity.core_registered,
+                                'registration_pending': identity.registration_pending,
                                 'capabilities': identity.capabilities,
                                 'relay_url': identity.relay_url,
                                 'registry_url': identity.registry_url,
@@ -255,6 +263,37 @@ class PlenipoMCP:
                         ),
                     )
                 ]
+
+            if name == 'plenipo_sync_identity':
+                from plenipo.identity.provision import ensure_identity
+                from plenipo.identity.sync import (
+                    SyncIdentityResult,
+                    sync_identity_with_core,
+                    sync_result_to_dict,
+                )
+
+                identity = await ensure_identity()
+                if identity.did_document_mode != 'core_hosted':
+                    return [
+                        TextContent(
+                            type='text',
+                            text=str(
+                                sync_result_to_dict(
+                                    SyncIdentityResult(
+                                        ok=True,
+                                        did=identity.did,
+                                        core_registered=identity.core_registered,
+                                        registration_pending=False,
+                                        document_fingerprint=identity.document_fingerprint,
+                                        warnings=['External identity; Core sync not required'],
+                                    )
+                                )
+                            ),
+                        )
+                    ]
+
+                _, result = await sync_identity_with_core(identity)
+                return [TextContent(type='text', text=str(sync_result_to_dict(result)))]
 
             if name == 'plenipo_declare_capabilities':
                 from plenipo.identity.capabilities import declare_capabilities

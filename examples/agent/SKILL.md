@@ -24,8 +24,9 @@ MCP config.
 ### Local / dev (agent-first)
 
 With Core running locally, install the MCP server and start it — no env vars required.
-On first tool call the MCP auto-provisions identity to `~/.plenipo/identity.json` and
-self-registers with Core.
+On first run the MCP creates identity offline in `~/.plenipo/identity.json` and
+best-effort syncs with Core when reachable. Use `plenipo_sync_identity` to retry
+registration after Core starts.
 
 Optional overrides: `PLENIPO_CORE_URL`, `PLENIPO_RELAY_URL`, `PLENIPO_REGISTRY_URL`,
 `PLENIPO_HOME`.
@@ -86,6 +87,7 @@ All tool arguments use **snake_case** in this SDK.
 | `plenipo_balance` | Check token balance | (none) |
 | `plenipo_did_create` | Generate DID + keys | optional `domain` |
 | `plenipo_identity` | Show current local identity | (none) |
+| `plenipo_sync_identity` | Register or retry Core sync | (none) |
 | `plenipo_declare_capabilities` | Update agent capabilities | `capabilities`, optional `replace` |
 | `plenipo_purchase_bundle` | Buy tokens via x402 | `agent_did`, `bundle_id`, optional `relay_url` |
 | `plenipo_mandate_prepare` | Unsigned mandate for operator | `agent_did`, `operator_did`, optional `relay_url` |
@@ -104,10 +106,11 @@ Use `plenipo_delivery_status` with the returned `envelope_id` to track lifecycle
 
 ### Onboard a new agent (local)
 
-1. Start the MCP server (identity auto-provisions on first run).
-2. `plenipo_identity` — confirm DID and endpoints.
-3. `plenipo_declare_capabilities` — advertise what the agent can do.
-4. `plenipo_balance` — purchase bundle if zero.
+1. Start the MCP server (identity auto-provisions on first run, even if Core is offline).
+2. `plenipo_identity` — confirm DID, `core_registered`, and endpoints.
+3. `plenipo_sync_identity` — if `registration_pending`, retry after Core is up.
+4. `plenipo_declare_capabilities` — advertise what the agent can do.
+5. `plenipo_balance` — purchase bundle if zero.
 
 ### Onboard a new agent (production)
 
@@ -144,7 +147,7 @@ Use `plenipo_delivery_status` with the returned `envelope_id` to track lifecycle
 
 | Symptom | Likely cause |
 | --- | --- |
-| `Missing MCP identity` | Start MCP with Core reachable, or set env / `~/.plenipo/identity.json` |
+| `Missing MCP identity` | Core offline is OK — identity is created locally; run `plenipo_sync_identity` when Core is up |
 | Connection refused | Relay not running or wrong `PLENIPO_RELAY_URL` |
 | Insufficient balance | Call `plenipo_purchase_bundle` or credit via operator |
 | `status: "queued"` | Recipient offline; normal — check `plenipo_delivery_status` later |

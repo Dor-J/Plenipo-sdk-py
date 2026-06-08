@@ -26,6 +26,7 @@ Early development. This repository is scaffolded; package layout and PyPI publis
 | `plenipo_balance` | Check token balance |
 | `plenipo_did_create` | Generate a new DID document and key pair |
 | `plenipo_identity` | Show the current local agent identity |
+| `plenipo_sync_identity` | Register or retry Core sync for local identity |
 | `plenipo_declare_capabilities` | Declare or update agent capabilities |
 
 ## Planned Layout
@@ -53,8 +54,8 @@ pip install plenipo-mcp
 python -m plenipo.mcp
 ```
 
-On first run the MCP auto-provisions `~/.plenipo/identity.json` and registers with
-local Core. No env vars required when Core is at `http://localhost:4000`.
+On first run the MCP auto-provisions `~/.plenipo/identity.json` offline and syncs with
+local Core when reachable. No env vars required when Core is at `http://localhost:4000`.
 
 ### Production agent setup
 
