@@ -6,8 +6,29 @@ from pathlib import Path
 
 import pytest
 
-from plenipo.identity.provision import ensure_identity, identity_to_mcp_config, provision_identity
+from plenipo.identity.provision import (
+    create_local_identity,
+    ensure_identity,
+    identity_to_mcp_config,
+    provision_identity,
+)
 from plenipo.identity.store import load_identity
+from plenipo.identity.urls import core_hosted_document_url
+
+
+async def test_create_local_identity_offline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+
+    identity = create_local_identity(core_url='http://core.local')
+
+    assert identity.did.startswith('did:web:localhost:agents:')
+    assert identity.did_document_url == core_hosted_document_url('http://core.local', identity.did)
+    assert identity.core_registered is False
+    assert identity.registration_pending is True
+    assert load_identity(tmp_path / 'identity.json') is not None
 
 
 async def test_provision_identity_persists_identity(
@@ -27,7 +48,7 @@ async def test_provision_identity_persists_identity(
         return {'type': 'did_registered', 'did': document['id']}
 
     monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
-    monkeypatch.setattr('plenipo.identity.provision.register_document', fake_register)
+    monkeypatch.setattr('plenipo.identity.sync.register_document', fake_register)
 
     identity = await provision_identity(
         core_url='http://core.local',
@@ -61,7 +82,7 @@ async def test_ensure_identity_loads_file_when_env_missing(
     monkeypatch.delenv('PLENIPO_DID', raising=False)
     monkeypatch.delenv('PLENIPO_AUTH_SECRET_B64', raising=False)
     monkeypatch.delenv('PLENIPO_DID_DOCUMENT_URL', raising=False)
-    monkeypatch.setattr('plenipo.identity.provision.register_document', _noop_register)
+    monkeypatch.setattr('plenipo.identity.sync.register_document', _noop_register)
 
     created = await provision_identity()
     monkeypatch.delenv('PLENIPO_DID', raising=False)

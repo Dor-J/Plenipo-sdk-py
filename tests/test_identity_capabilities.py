@@ -20,7 +20,7 @@ async def test_declare_capabilities_updates_identity_and_registers(
         calls.append({'core_url': core_url, 'document': document, 'auth_secret_b64': auth_secret_b64})
         return {'type': 'did_registered', 'did': document['id']}
 
-    monkeypatch.setattr('plenipo.identity.capabilities.register_document', fake_register)
+    monkeypatch.setattr('plenipo.identity.sync.register_document', fake_register)
 
     identity = identity_from_create_result(
         did='did:web:localhost:agents:cap',

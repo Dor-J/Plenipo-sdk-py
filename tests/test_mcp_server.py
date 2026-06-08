@@ -118,17 +118,17 @@ def test_mcp_main_uses_environment(monkeypatch) -> None:  # type: ignore[no-unty
 
     called: list[str] = []
 
-    def fake_load() -> None:
-        called.append('load')
+    async def fake_bootstrap() -> None:
+        called.append('bootstrap')
 
     async def fake_run_stdio(self: PlenipoMCP) -> None:
         called.append(self._options.relay_url)
 
     monkeypatch.setenv('PLENIPO_AUTH_SECRET_B64', 'AUTH')
     monkeypatch.setenv('PLENIPO_RELAY_URL', 'wss://relay.example')
-    monkeypatch.setattr(server_module, 'load_mcp_config_from_env', fake_load)
+    monkeypatch.setattr(server_module, 'bootstrap_mcp_runtime', fake_bootstrap)
     monkeypatch.setattr(PlenipoMCP, 'run_stdio', fake_run_stdio)
 
     server_module.main()
 
-    assert called == ['load', 'wss://relay.example']
+    assert called == ['bootstrap', 'wss://relay.example']
