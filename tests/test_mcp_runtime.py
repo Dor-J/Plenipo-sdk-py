@@ -148,15 +148,47 @@ def test_load_mcp_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.registry_url == 'https://registry.local'
 
 
-def test_load_mcp_config_requires_core_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_mcp_config_reads_identity_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from plenipo.identity.store import identity_from_create_result, save_identity
+    from plenipo.mcp.runtime import load_mcp_config_from_env
+
+    monkeypatch.delenv('PLENIPO_DID', raising=False)
+    monkeypatch.delenv('PLENIPO_AUTH_SECRET_B64', raising=False)
+    monkeypatch.delenv('PLENIPO_DID_DOCUMENT_URL', raising=False)
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+
+    identity = identity_from_create_result(
+        did='did:web:localhost:agents:file',
+        auth_secret_b64='AUTH',
+        enc_secret_b64='ENC',
+        did_document_url='https://localhost/agents/file/did.json',
+        document={'id': 'did:web:localhost:agents:file', 'service': []},
+        relay_url='ws://localhost:4000/agent/websocket',
+        registry_url='http://localhost:4001',
+        core_url='http://localhost:4000',
+    )
+    save_identity(identity)
+
+    config = load_mcp_config_from_env()
+    assert config.did == identity.did
+
+
+def test_load_mcp_config_requires_identity_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
     from plenipo.mcp.runtime import load_mcp_config_from_env
 
     monkeypatch.delenv('PLENIPO_DID', raising=False)
     monkeypatch.delenv('PLENIPO_AUTH_SECRET_B64', raising=False)
     monkeypatch.delenv('PLENIPO_DID_PRIVATE_KEY', raising=False)
     monkeypatch.delenv('PLENIPO_DID_DOCUMENT_URL', raising=False)
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
 
-    with pytest.raises(RuntimeError, match='Missing MCP env'):
+    with pytest.raises(RuntimeError, match='Missing MCP identity'):
         load_mcp_config_from_env()
 
 
