@@ -12,7 +12,7 @@ from plenipo.runtime.events import AgentEvent, DeliveryReceiptEvent, MessageEven
 from plenipo.runtime.state import load_runtime_state
 from plenipo.runtime.store import OutboxRecord, ReceiptRecord, RuntimeStore
 
-SIDECAR_VERSION = '0.2'
+SIDECAR_VERSION = '0.2.1'
 SERVICE_NAME = 'plenipo-agent-sidecar'
 
 SECRET_KEYS = frozenset(

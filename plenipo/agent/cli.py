@@ -50,6 +50,34 @@ def _build_parser() -> argparse.ArgumentParser:
         action='store_true',
         help='Allow binding to non-localhost interfaces',
     )
+    sidecar_parser.add_argument(
+        '--token',
+        default=None,
+        help='Bearer token override (default: env, token file, or generated)',
+    )
+    sidecar_parser.add_argument(
+        '--no-auth',
+        action='store_true',
+        help='Disable bearer auth (localhost development only)',
+    )
+    sidecar_parser.add_argument(
+        '--print-token',
+        action='store_true',
+        help='Print bearer token to stderr on startup',
+    )
+    sidecar_parser.add_argument(
+        '--allow-origin',
+        action='append',
+        default=[],
+        help='Allowed browser Origin header (repeatable)',
+    )
+
+    token_parser = subparsers.add_parser('sidecar-token', help='Show sidecar token file status')
+    token_parser.add_argument(
+        '--show',
+        action='store_true',
+        help='Print bearer token to stdout (with stderr warning)',
+    )
     return parser
 
 
@@ -206,12 +234,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == 'sidecar':
         return _run_sidecar(args)
 
+    if args.command == 'sidecar-token':
+        return _show_sidecar_token(args)
+
     parser.error(f'unknown command: {args.command}')
     return 2
 
 
+def _show_sidecar_token(args: argparse.Namespace) -> int:
+    from plenipo.sidecar.auth import read_sidecar_token_file, sidecar_token_path
+
+    path = sidecar_token_path()
+    exists = path.is_file()
+    print(f'Token file: {path}')
+    print(f'Exists: {str(exists).lower()}')
+    if args.show:
+        print('WARNING: displaying sidecar bearer token', file=sys.stderr)
+        if exists:
+            token = read_sidecar_token_file(path)
+            if token:
+                print(token)
+    return 0
+
+
 def _run_sidecar(args: argparse.Namespace) -> int:
-    from plenipo.sidecar.config import SidecarConfig, validate_bind_host
+    from plenipo.sidecar.config import SidecarConfig, validate_bind_host, validate_no_auth_bind
     from plenipo.sidecar.server import run_sidecar
 
     _apply_local_defaults()
@@ -221,9 +268,14 @@ def _run_sidecar(args: argparse.Namespace) -> int:
         capability=args.capability,
         protocol=args.protocol,
         allow_remote_bind=args.allow_remote_bind,
+        token=args.token,
+        no_auth=args.no_auth,
+        print_token=args.print_token,
+        allowed_origins=tuple(args.allow_origin),
     )
     try:
         validate_bind_host(config.host, allow_remote_bind=config.allow_remote_bind)
+        validate_no_auth_bind(config.host, no_auth=config.no_auth)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

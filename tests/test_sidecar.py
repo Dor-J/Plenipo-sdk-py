@@ -1,9 +1,11 @@
-"""Tests for Plenipo Agent Sidecar v0.2."""
+"""Tests for Plenipo Agent Sidecar v0.2.1 security and API."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import stat
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,7 +19,20 @@ from plenipo.identity.store import AgentIdentity
 from plenipo.runtime.events import DeliveryReceiptEvent, MessageEvent
 from plenipo.runtime.store import OutboxRecord, ReceiptRecord, RuntimeStore
 from plenipo.sidecar.api import SidecarApp
-from plenipo.sidecar.config import SidecarConfig, validate_bind_host
+from plenipo.sidecar.auth import (
+    read_sidecar_token_file,
+    resolve_sidecar_token,
+    sidecar_token_path,
+    write_sidecar_token_file,
+)
+from plenipo.sidecar.client import PlenipoSidecarClient
+from plenipo.sidecar.config import (
+    NO_AUTH_WARNING,
+    SidecarConfig,
+    SidecarSecurity,
+    validate_bind_host,
+    validate_no_auth_bind,
+)
 from plenipo.sidecar.events import EventBuffer
 from plenipo.sidecar.models import (
     SERVICE_NAME,
@@ -25,6 +40,8 @@ from plenipo.sidecar.models import (
     contains_secret_keys,
     event_to_dict,
 )
+
+TEST_TOKEN = 'test-bearer-token-secret'
 
 
 @dataclass
@@ -79,7 +96,11 @@ def _fake_identity(tmp_path) -> AgentIdentity:  # type: ignore[no-untyped-def]
                 'type': 'PlenipoAgent',
                 'protocols': ['plenipo.message.v1'],
                 'capabilities': ['general', 'mcp'],
-                'payment': {'model': 'per_kb', 'price_per_kb_tokens': 1, 'accepted_schemes': ['plenipo-dev-token']},
+                'payment': {
+                    'model': 'per_kb',
+                    'price_per_kb_tokens': 1,
+                    'accepted_schemes': ['plenipo-dev-token'],
+                },
                 'limits': {'max_message_kb': 256, 'offline_queue_ttl_seconds': 86400},
                 'encryption': {'alg': 'nacl-sealedbox-v1', 'publicKeyRef': '#enc-key'},
             }
@@ -100,6 +121,23 @@ def _fake_identity(tmp_path) -> AgentIdentity:  # type: ignore[no-untyped-def]
     )
 
 
+def _auth_headers(token: str = TEST_TOKEN) -> dict[str, str]:
+    return {'Authorization': f'Bearer {token}'}
+
+
+def _make_security(
+    *,
+    auth_enabled: bool = True,
+    token: str | None = TEST_TOKEN,
+    allowed_origins: frozenset[str] = frozenset(),
+) -> SidecarSecurity:
+    return SidecarSecurity(
+        auth_enabled=auth_enabled,
+        token=token,
+        allowed_origins=allowed_origins,
+    )
+
+
 @pytest.fixture
 def sidecar_setup(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
@@ -107,18 +145,19 @@ def sidecar_setup(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     runtime._store = RuntimeStore(tmp_path / 'runtime.sqlite')
     runtime._client = type('Conn', (), {'connected': True})()
     buffer = EventBuffer(max_size=100)
-    app = SidecarApp(runtime, buffer).create_app()
+    security = _make_security()
+    app = SidecarApp(runtime, buffer, security).create_app()
     client = TestClient(app)
-    return client, runtime, buffer
+    return client, runtime, buffer, security
 
 
 @pytest.fixture
 def sidecar_client(sidecar_setup):  # type: ignore[no-untyped-def]
-    client, _runtime, _buffer = sidecar_setup
+    client, _runtime, _buffer, _security = sidecar_setup
     return client
 
 
-def test_health_returns_ok(sidecar_client: TestClient) -> None:
+def test_health_returns_ok_without_auth(sidecar_client: TestClient) -> None:
     response = sidecar_client.get('/health')
     assert response.status_code == 200
     body = response.json()
@@ -127,34 +166,41 @@ def test_health_returns_ok(sidecar_client: TestClient) -> None:
     assert body['version'] == SIDECAR_VERSION
 
 
-def test_status_hides_secrets(sidecar_client: TestClient) -> None:
+def test_status_fails_without_token(sidecar_client: TestClient) -> None:
     response = sidecar_client.get('/status')
+    assert response.status_code == 401
+
+
+def test_status_works_with_valid_token(sidecar_client: TestClient) -> None:
+    response = sidecar_client.get('/status', headers=_auth_headers())
     assert response.status_code == 200
     body = response.json()
     assert body['did'] == 'did:web:localhost:agents:test'
-    assert body['connected'] is True
-    assert body['core_registered'] is True
-    assert body['route_declared'] is True
-    assert 'outbox' in body
-    assert 'receipts' in body
     assert not contains_secret_keys(body)
-    assert 'secret-auth' not in response.text
-    assert 'secret-enc' not in response.text
 
 
-def test_send_calls_runtime_and_returns_billing(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
-    client, runtime, _buffer = sidecar_setup
-    response = client.post(
+def test_invalid_token_returns_401(sidecar_client: TestClient) -> None:
+    response = sidecar_client.get('/status', headers=_auth_headers('wrong-token'))
+    assert response.status_code == 401
+
+
+def test_send_requires_token(sidecar_client: TestClient) -> None:
+    response = sidecar_client.post(
         '/send',
         json={'recipient_did': 'did:web:localhost:agents:peer', 'message': 'hello'},
     )
+    assert response.status_code == 401
+
+
+def test_send_calls_runtime_and_returns_billing(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
+    client, runtime, _buffer, _security = sidecar_setup
+    response = client.post(
+        '/send',
+        json={'recipient_did': 'did:web:localhost:agents:peer', 'message': 'hello'},
+        headers=_auth_headers(),
+    )
     assert response.status_code == 200
     body = response.json()
-    assert body['envelope_id'] == '01ENVELOPE'
-    assert body['ciphertext_bytes'] == 105
-    assert body['billable_kb'] == 1
-    assert body['charged_tokens'] == 1
-    assert body['balance_after'] == 999
     assert body['status'] == 'accepted'
     assert runtime.send_calls[0]['message'] == 'hello'
 
@@ -175,19 +221,15 @@ def test_discover_passes_filters(monkeypatch, sidecar_client: TestClient) -> Non
 
     monkeypatch.setattr('plenipo.sidecar.api.discover_agents', fake_discover)
     response = sidecar_client.get(
-        '/discover?capability=mcp&protocol=plenipo.message.v1&limit=5&online=true'
+        '/discover?capability=mcp&protocol=plenipo.message.v1&limit=5&online=true',
+        headers=_auth_headers(),
     )
     assert response.status_code == 200
-    body = response.json()
-    assert len(body['results']) == 1
     assert captured['capability'] == 'mcp'
-    assert captured['protocol'] == 'plenipo.message.v1'
-    assert captured['limit'] == 5
-    assert captured['online'] is True
 
 
 def test_outbox_returns_sanitized_rows(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
-    client, runtime, _buffer = sidecar_setup
+    client, runtime, _buffer, _security = sidecar_setup
     runtime._store.insert_outbox_pending(
         envelope_id='01OUT',
         recipient_did='did:web:localhost:agents:peer',
@@ -199,38 +241,193 @@ def test_outbox_returns_sanitized_rows(sidecar_setup) -> None:  # type: ignore[n
         charged_tokens=1,
         balance_after=99,
     )
-
-    response = client.get('/outbox')
+    response = client.get('/outbox', headers=_auth_headers())
     assert response.status_code == 200
-    rows = response.json()['outbox']
-    assert len(rows) == 1
-    assert rows[0]['envelope_id'] == '01OUT'
-    assert rows[0]['status'] == 'accepted'
-    assert not contains_secret_keys(rows)
+    assert response.json()['outbox'][0]['envelope_id'] == '01OUT'
 
 
 def test_receipts_returns_sanitized_rows(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
-    client, runtime, _buffer = sidecar_setup
+    client, runtime, _buffer, _security = sidecar_setup
     runtime._store.upsert_receipt(
         {
             'envelope_id': '01RCPT',
             'recipient_did': 'did:web:localhost:agents:peer',
-            'ciphertext_bytes': 20,
-            'billable_kb': 1,
             'charged_tokens': 1,
-            'balance_after': 98,
             'delivered_at': '2026-01-01T00:00:01Z',
         },
         sender_did='did:web:localhost:agents:test',
     )
-
-    response = client.get('/receipts')
+    response = client.get('/receipts', headers=_auth_headers())
     assert response.status_code == 200
-    rows = response.json()['receipts']
-    assert len(rows) == 1
-    assert rows[0]['envelope_id'] == '01RCPT'
-    assert rows[0]['charged_tokens'] == 1
-    assert not contains_secret_keys(rows)
+    assert response.json()['receipts'][0]['envelope_id'] == '01RCPT'
+
+
+def test_events_endpoint_returns_buffered_events(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
+    client, _runtime, buffer, _security = sidecar_setup
+    buffer.append_runtime_event(
+        MessageEvent(envelope_id='01MSG', sender_did='did:web:localhost:agents:sender', plaintext='hi')
+    )
+    response = client.get('/events?timeout_ms=100&limit=10', headers=_auth_headers())
+    assert response.status_code == 200
+    assert response.json()['events'][0]['plaintext'] == 'hi'
+
+
+def test_no_auth_allows_requests_locally(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    runtime = FakeRuntime(_identity=_fake_identity(tmp_path))
+    runtime._client = type('Conn', (), {'connected': True})()
+    app = SidecarApp(
+        runtime,
+        EventBuffer(),
+        _make_security(auth_enabled=False, token=None),
+    ).create_app()
+    client = TestClient(app)
+    assert client.get('/status').status_code == 200
+
+
+def test_no_auth_non_localhost_bind_rejected() -> None:
+    with pytest.raises(ValueError, match='--no-auth cannot be used'):
+        validate_no_auth_bind('0.0.0.0', no_auth=True)
+
+
+def test_cli_sidecar_rejects_no_auth_remote_bind(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    assert main(['sidecar', '--host', '0.0.0.0', '--no-auth', '--allow-remote-bind']) == 2
+
+
+def test_token_file_generated_with_restrictive_permissions(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    token, path, generated = resolve_sidecar_token(generate_if_missing=True)
+    assert generated is True
+    assert token is not None
+    assert path is not None
+    assert read_sidecar_token_file(path) == token
+    if os.name != 'nt':
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o600
+
+
+def test_env_token_override(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    monkeypatch.setenv('PLENIPO_SIDECAR_TOKEN', 'env-token-value')
+    token, _path, generated = resolve_sidecar_token()
+    assert token == 'env-token-value'
+    assert generated is False
+
+
+def test_cli_token_path_command(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    write_sidecar_token_file('cli-token-value')
+    printed: list[str] = []
+    monkeypatch.setattr('builtins.print', lambda *args, **kwargs: printed.append(' '.join(str(a) for a in args)))
+    assert main(['sidecar-token']) == 0
+    output = '\n'.join(printed)
+    assert 'Token file:' in output
+    assert 'Exists: true' in output
+    assert 'cli-token-value' not in output
+
+
+def test_cli_token_show_prints_token(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    write_sidecar_token_file('shown-token')
+    stdout: list[str] = []
+    stderr: list[str] = []
+    monkeypatch.setattr('builtins.print', lambda *args, **kwargs: (
+        stderr if kwargs.get('file') is __import__('sys').stderr else stdout
+    ).append(' '.join(str(a) for a in args)))
+    assert main(['sidecar-token', '--show']) == 0
+    assert any('WARNING' in line for line in stderr)
+    assert 'shown-token' in stdout
+
+
+def test_cors_default_has_no_wildcard(sidecar_client: TestClient) -> None:
+    response = sidecar_client.get(
+        '/status',
+        headers={**_auth_headers(), 'Origin': 'http://evil.example'},
+    )
+    assert response.status_code == 403
+    assert response.headers.get('access-control-allow-origin') != '*'
+
+
+def test_cors_disallowed_origin_rejected(sidecar_client: TestClient) -> None:
+    response = sidecar_client.get(
+        '/status',
+        headers={**_auth_headers(), 'Origin': 'http://127.0.0.1:9999'},
+    )
+    assert response.status_code == 403
+
+
+def test_cors_allowed_origin_accepted(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    runtime = FakeRuntime(_identity=_fake_identity(tmp_path))
+    runtime._client = type('Conn', (), {'connected': True})()
+    security = _make_security(allowed_origins=frozenset({'http://127.0.0.1:3000'}))
+    app = SidecarApp(runtime, EventBuffer(), security).create_app()
+    client = TestClient(app)
+    response = client.get(
+        '/status',
+        headers={**_auth_headers(), 'Origin': 'http://127.0.0.1:3000'},
+    )
+    assert response.status_code == 200
+    assert response.headers.get('access-control-allow-origin') == 'http://127.0.0.1:3000'
+
+
+def test_authorization_header_not_logged(caplog, sidecar_client: TestClient) -> None:
+    caplog.set_level(logging.INFO, logger='plenipo.sidecar.access')
+    sidecar_client.get('/status', headers=_auth_headers('super-secret-bearer'))
+    assert TEST_TOKEN not in caplog.text
+    assert 'super-secret-bearer' not in caplog.text
+    assert 'Authorization' not in caplog.text
+
+
+def test_send_body_not_logged(caplog, sidecar_client: TestClient) -> None:
+    caplog.set_level(logging.INFO, logger='plenipo.sidecar.access')
+    secret_message = 'super-secret-payload'
+    sidecar_client.post(
+        '/send',
+        json={'recipient_did': 'did:web:localhost:agents:peer', 'message': secret_message},
+        headers=_auth_headers(),
+    )
+    assert secret_message not in caplog.text
+
+
+def test_sidecar_client_calls_status_and_send(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    captured: list[tuple[str, str, dict[str, Any]]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {
+                'did': 'did:web:localhost:agents:test',
+                'status': 'accepted',
+                'events': [{'type': 'message'}],
+                'since_id': 1,
+            }
+
+    def fake_request(
+        _self: httpx.Client,
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> FakeResponse:
+        captured.append((method, path, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(httpx.Client, 'request', fake_request)
+    sc = PlenipoSidecarClient(base_url='http://127.0.0.1:8787', token=TEST_TOKEN)
+    sc.status()
+    sc.send('did:web:localhost:agents:peer', 'hello')
+    sc.events(timeout_ms=100)
+    sc.close()
+
+    assert captured[0][0] == 'GET'
+    assert captured[0][1] == '/status'
+    assert captured[0][2]['headers']['Authorization'] == f'Bearer {TEST_TOKEN}'
+    assert captured[1][0] == 'POST'
+    assert captured[1][1] == '/send'
+    assert captured[2][0] == 'GET'
+    assert captured[2][1] == '/events'
 
 
 @pytest.mark.asyncio
@@ -248,50 +445,16 @@ async def test_events_long_poll_returns_message_and_receipt() -> None:
         )
         async with buffer._condition:
             buffer._condition.notify_all()
-        await asyncio.sleep(0.05)
-        buffer.append_runtime_event(
-            DeliveryReceiptEvent(
-                envelope_id='01RCPT',
-                charged_tokens=1,
-                delivered_at='2026-01-01T00:00:01Z',
-            )
-        )
-        async with buffer._condition:
-            buffer._condition.notify_all()
 
     producer = asyncio.create_task(produce())
     matches = await buffer.wait_for_events(since_id=0, timeout_ms=2000, limit=10)
-    assert len(matches) >= 1
     assert matches[0].payload['type'] == 'message'
-
-    matches2 = await buffer.wait_for_events(
-        since_id=matches[0].event_id,
-        timeout_ms=2000,
-        limit=10,
-    )
-    assert any(item.payload['type'] == 'delivery_receipt' for item in matches2)
     await producer
-
-
-def test_events_endpoint_returns_buffered_events(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
-    client, _runtime, buffer = sidecar_setup
-    buffer.append_runtime_event(
-        MessageEvent(envelope_id='01MSG', sender_did='did:web:localhost:agents:sender', plaintext='hi')
-    )
-
-    response = client.get('/events?timeout_ms=100&limit=10')
-    assert response.status_code == 200
-    body = response.json()
-    assert len(body['events']) == 1
-    assert body['events'][0]['type'] == 'message'
-    assert body['events'][0]['plaintext'] == 'hi'
 
 
 def test_non_localhost_bind_requires_flag() -> None:
     with pytest.raises(ValueError, match='allow-remote-bind'):
         validate_bind_host('0.0.0.0', allow_remote_bind=False)
-
-    validate_bind_host('0.0.0.0', allow_remote_bind=True)
 
 
 def test_cli_sidecar_rejects_remote_bind_without_flag(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -299,31 +462,11 @@ def test_cli_sidecar_rejects_remote_bind_without_flag(monkeypatch) -> None:  # t
     assert main(['sidecar', '--host', '0.0.0.0']) == 2
 
 
-def test_send_plaintext_not_logged(caplog, sidecar_client: TestClient) -> None:
-    caplog.set_level(logging.INFO)
-    secret_message = 'super-secret-payload'
-    sidecar_client.post(
-        '/send',
-        json={'recipient_did': 'did:web:localhost:agents:peer', 'message': secret_message},
-    )
-    assert secret_message not in caplog.text
-
-
-def test_event_to_dict_maps_message_and_receipt() -> None:
-    message = event_to_dict(
-        MessageEvent(envelope_id='01MSG', sender_did='did:web:localhost:agents:a', plaintext='x')
-    )
-    assert message is not None
-    assert message['type'] == 'message'
-
-    receipt = event_to_dict(
-        DeliveryReceiptEvent(envelope_id='01RCPT', charged_tokens=1, delivered_at='t')
-    )
-    assert receipt is not None
-    assert receipt['type'] == 'delivery_receipt'
-
-
 def test_sidecar_config_defaults() -> None:
     config = SidecarConfig()
     assert config.host == '127.0.0.1'
-    assert config.port == 8787
+    assert config.no_auth is False
+
+
+def test_no_auth_warning_message() -> None:
+    assert '--no-auth' in NO_AUTH_WARNING

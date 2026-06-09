@@ -124,23 +124,30 @@ plenipo-agent receipts
 - Cursor-based receipt replay recovery after crash/reconnect
 - `status` hides secrets; use `--print-plaintext` only when explicitly needed
 
-## Agent Sidecar v0.2 (local HTTP)
+## Agent Sidecar v0.2.1 (local HTTP)
 
 When the agent process is **not Python** (or should not embed the SDK), run the sidecar locally:
 
 ```bash
 plenipo-agent sidecar --host 127.0.0.1 --port 8787
+plenipo-agent sidecar-token
 ```
 
-Then call the local API from your agent process:
+### Sidecar local API security
+
+- `/health` is public; all other endpoints require `Authorization: Bearer <token>`
+- Token: `--token` > `PLENIPO_SIDECAR_TOKEN` > `~/.plenipo/sidecar-token` > generated on first start
+- CORS locked down by default; use `--allow-origin` for browser clients
+- `--no-auth` is localhost-only; non-localhost bind without auth is rejected
+- Local API may see plaintext; Core/Registry/Relay do not; tokens/plaintext are not logged
+
+Then call the local API from your agent process (or use `PlenipoSidecarClient.from_env()`):
 
 - `GET /health`, `GET /status` — readiness and sanitized runtime state
 - `POST /route`, `GET /discover` — Route Record declaration and discovery
 - `POST /send` — encrypt and send paid messages
 - `GET /events` — long-poll decrypted messages and delivery receipts
 - `GET /outbox`, `GET /receipts` — durable local state inspection
-
-The local API may see plaintext because it encrypts/decrypts on behalf of the local agent. Core/Registry/Relay never see plaintext. Sidecar does not persist inbound plaintext by default and does not return private keys.
 
 Non-localhost bind requires `--allow-remote-bind` and prints a loud warning.
 

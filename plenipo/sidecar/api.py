@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -13,7 +14,9 @@ from starlette.routing import Route
 from plenipo.discover import discover_agents
 from plenipo.identity.route import declare_route, route_from_document
 from plenipo.runtime import PlenipoAgentRuntime
+from plenipo.sidecar.config import SidecarSecurity
 from plenipo.sidecar.events import EventBuffer
+from plenipo.sidecar.middleware import AuthMiddleware, CorsMiddleware, RequestLoggingMiddleware
 from plenipo.sidecar.models import (
     SERVICE_NAME,
     SIDECAR_VERSION,
@@ -29,13 +32,19 @@ from plenipo.sidecar.models import (
 class SidecarApp:
     """HTTP application backed by a PlenipoAgentRuntime instance."""
 
-    def __init__(self, runtime: PlenipoAgentRuntime, event_buffer: EventBuffer) -> None:
+    def __init__(
+        self,
+        runtime: PlenipoAgentRuntime,
+        event_buffer: EventBuffer,
+        security: SidecarSecurity,
+    ) -> None:
         self._runtime = runtime
         self._event_buffer = event_buffer
+        self._security = security
         self._identity = runtime._identity
 
     def create_app(self) -> Starlette:
-        """Builds the Starlette application."""
+        """Builds the Starlette application with security middleware."""
         return Starlette(
             routes=[
                 Route('/health', self.health, methods=['GET']),
@@ -46,6 +55,18 @@ class SidecarApp:
                 Route('/events', self.events, methods=['GET']),
                 Route('/outbox', self.outbox, methods=['GET']),
                 Route('/receipts', self.receipts, methods=['GET']),
+            ],
+            middleware=[
+                Middleware(RequestLoggingMiddleware),
+                Middleware(
+                    CorsMiddleware,
+                    allowed_origins=self._security.allowed_origins,
+                ),
+                Middleware(
+                    AuthMiddleware,
+                    auth_enabled=self._security.auth_enabled,
+                    token=self._security.token,
+                ),
             ],
         )
 

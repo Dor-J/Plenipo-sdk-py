@@ -12,7 +12,7 @@ Active development. Core relay, Registry discovery, Route Records v1, MCP tools,
 
 - **MCP server** — poll-based tools for send, receive, discover, balance, identity, route declaration, and receipt replay
 - **Agent Runtime v0.1** — durable SQLite outbox/receipts, idempotent sends, cursor-based receipt replay
-- **Agent Sidecar v0.2** — local HTTP API around the runtime for non-Python agent processes
+- **Agent Sidecar v0.2.1** — authenticated local HTTP API + Python client helper
 - **CLI** — `plenipo-agent run` for long-lived autonomous agents with sanitized event output
 - **Programmatic client** — `PlenipoClient` WebSocket relay with `list_receipts()`
 - **DID helpers** — W3C DID document generation, Core sync, Route Record declaration
@@ -66,7 +66,7 @@ Runtime behavior:
 - Auto-reconnects with bounded exponential backoff
 - Recovers missed receipts via cursor-based `receipt.list` pagination
 
-## Agent Sidecar v0.2
+## Agent Sidecar v0.2.1
 
 Run Plenipo as a local HTTP sidecar so any agent process can use the network without embedding the Python SDK:
 
@@ -75,28 +75,63 @@ plenipo-agent sidecar --host 127.0.0.1 --port 8787
 python -m plenipo.agent sidecar --capability mcp --protocol plenipo.message.v1
 ```
 
+### Sidecar local API security
+
+- `/health` is public; all other endpoints require `Authorization: Bearer <token>` by default
+- Token resolution: `--token` > `PLENIPO_SIDECAR_TOKEN` > `~/.plenipo/sidecar-token` > generated on first start
+- Inspect token file: `plenipo-agent sidecar-token` (use `--show` to print token with warning)
+- CORS disabled by default; allow browser origins with `--allow-origin` or `PLENIPO_SIDECAR_ALLOWED_ORIGINS`
+- `--no-auth` is localhost-only development mode (refuses non-localhost bind)
+- Local API may see plaintext; Core/Registry/Relay never do; bodies/tokens are not logged by default
+
+Example authenticated request:
+
+```bash
+TOKEN=$(cat ~/.plenipo/sidecar-token)
+
+curl http://127.0.0.1:8787/status \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+PowerShell:
+
+```powershell
+$TOKEN = Get-Content "$env:USERPROFILE\.plenipo\sidecar-token"
+
+curl.exe http://127.0.0.1:8787/status `
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Python client:
+
+```python
+from plenipo.sidecar.client import PlenipoSidecarClient
+
+client = PlenipoSidecarClient.from_env()
+status = client.status()
+ack = client.send(recipient_did='...', message='hello')
+events = client.events(timeout_ms=1000)
+```
+
 Example local send:
 
 ```bash
 curl -X POST http://127.0.0.1:8787/send \
+  -H "Authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
   -d '{"recipient_did":"did:web:localhost:agents:peer","message":"hello"}'
 ```
 
 Sidecar endpoints: `/health`, `/status`, `/route`, `/discover`, `/send`, `/events`, `/outbox`, `/receipts`.
 
-Privacy defaults:
-
-- Binds to `127.0.0.1` unless `--allow-remote-bind` is set (non-localhost prints a loud warning)
-- Local API may see plaintext because it encrypts/decrypts for the local agent process
-- Core/Registry/Relay do not see plaintext
-- No private keys in API responses; no plaintext persistence by default
-
-Docker packaging (host-only port publish):
+Docker packaging (host-only port publish; token generated in `/data/sidecar-token`):
 
 ```bash
 docker compose -f docker-compose.agent.yml up --build
+docker exec plenipo-agent-plenipo-agent-1 cat /data/sidecar-token
 ```
+
+Or set `PLENIPO_SIDECAR_TOKEN` in compose environment.
 
 ## Layout
 
