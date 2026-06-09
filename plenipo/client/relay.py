@@ -67,6 +67,8 @@ class PlenipoClient:
         self._join_ref = '1'
         self._ref = 2
         self._pending: dict[str, asyncio.Future[Any]] = {}
+        self._reader_task: asyncio.Task[None] | None = None
+        self._connected = False
 
     def on_message(self, handler: MessageHandler) -> None:
         """Registers a handler for incoming envelopes."""
@@ -108,8 +110,32 @@ class PlenipoClient:
                 msg = json.loads(raw)
                 await self._handle_phoenix(msg, joined)
 
-        asyncio.create_task(reader())
+        self._reader_task = asyncio.create_task(reader())
         await joined.wait()
+        self._connected = True
+
+    async def disconnect(self) -> None:
+        """Closes the relay WebSocket and stops the reader task."""
+        self._connected = False
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except asyncio.CancelledError:
+                pass
+            self._reader_task = None
+        if self._ws is not None:
+            await self._ws.close()
+            self._ws = None
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(RuntimeError('relay disconnected'))
+        self._pending.clear()
+
+    @property
+    def connected(self) -> bool:
+        """Whether the relay WebSocket is connected."""
+        return self._connected
 
     async def send(
         self,
@@ -172,6 +198,27 @@ class PlenipoClient:
         self._ref += 1
         payload = cast(dict[str, Any], await self._request_reply(ref, 'balance.get', {}))
         return int(payload['balance'])
+
+    async def list_receipts(
+        self,
+        *,
+        since: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Lists persisted delivery receipts for the authenticated sender."""
+        request: dict[str, Any] = {'limit': limit}
+        if since:
+            request['since'] = since
+        ref = str(self._ref)
+        self._ref += 1
+        payload = cast(
+            dict[str, Any],
+            await self._request_reply(ref, 'receipt.list', request),
+        )
+        receipts = payload.get('receipts', [])
+        if not isinstance(receipts, list):
+            return []
+        return [cast(dict[str, Any], row) for row in receipts]
 
     async def _request_reply(self, ref: str, event: str, payload: dict[str, Any]) -> Any:
         loop = asyncio.get_running_loop()

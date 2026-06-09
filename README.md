@@ -2,51 +2,85 @@
 
 > MCP-native skill and client for LangChain, AutoGen, CrewAI, LlamaIndex, and custom Python agents.
 
-**plenipo-mcp** (package name TBD) connects Python 3.11+ agents to the Plenipo relay: DID authentication, E2E encrypted messaging, discovery, and x402 token billing — exposed as an MCP server and as a library.
+**plenipo-mcp** connects Python 3.11+ agents to the Plenipo relay: DID authentication, E2E encrypted messaging, discovery, dev-token billing, and autonomous Agent Runtime v0 — exposed as an MCP server, a long-lived runtime CLI, and a library.
 
 ## Status
 
-Early development. This repository is scaffolded; package layout and PyPI publish are not yet present.
+Active development. Core relay, Registry discovery, Route Records v1, MCP tools, and **Agent Runtime v0** are implemented for local autonomous messaging. Wallet x402 per-message payment, marketplace, task protocol, and production wallet funding are **not** implemented in this slice.
 
-## Features (planned)
+## Features
 
-- **MCP server** — same tool surface as the TypeScript SDK
-- **Programmatic client** — `PlenipoMCP` and lower-level client APIs
-- **DID helpers** — W3C DID document generation and management
+- **MCP server** — poll-based tools for send, receive, discover, balance, identity, route declaration, and receipt replay
+- **Agent Runtime v0** — `PlenipoAgentRuntime` with auto-reconnect, decrypt-on-receive, and missed receipt recovery via `receipt.list`
+- **CLI** — `plenipo-agent run` for long-lived autonomous agents with sanitized event output
+- **Programmatic client** — `PlenipoClient` WebSocket relay with `list_receipts()`
+- **DID helpers** — W3C DID document generation, Core sync, Route Record declaration
 - **Crypto** — encrypt to recipient keys; decrypt on receive
-- **Payments** — x402 proof generation for relay requests
+- **Payments (dev)** — per-ciphertext-KB billing with `plenipo-dev-token` on localhost agents
 
 ## MCP Tools
 
 | Tool | Description |
 |------|-------------|
 | `plenipo_send` | Send an encrypted message to another agent by DID |
-| `plenipo_receive` | Poll or stream incoming messages |
+| `plenipo_receive` | Poll incoming messages |
 | `plenipo_discover` | Search Route Records (protocol, payment, capability filters) |
 | `plenipo_balance` | Check token balance |
+| `plenipo_receipts` | List persisted delivery receipts for the sender (billing metadata) |
 | `plenipo_did_create` | Generate a new DID document and key pair |
 | `plenipo_identity` | Show the current local agent identity and Route Record |
 | `plenipo_sync_identity` | Register or retry Core sync for local identity |
 | `plenipo_declare_capabilities` | Declare or update agent capabilities |
 | `plenipo_declare_route` | Declare or update Route Record metadata (protocols, payment, limits) |
 
-## Planned Layout
+## Agent Runtime v0
+
+For autonomous agents that stay connected (not poll-based MCP), use the runtime:
+
+```python
+from plenipo.runtime import PlenipoAgentRuntime
+
+async with PlenipoAgentRuntime() as agent:
+    async for event in agent.events():
+        print(event.type, event)
+```
+
+Or via CLI:
+
+```bash
+python -m plenipo.agent run --print-events
+plenipo-agent run --capability mcp --protocol plenipo.message.v1 --print-events
+```
+
+Runtime behavior:
+
+- Loads/creates identity from `~/.plenipo/identity.json`
+- Syncs with Core and declares a default Route Record when missing
+- Auto-reconnects with bounded exponential backoff
+- Decrypts inbound messages (never persists plaintext by default)
+- Recovers missed delivery receipts after reconnect using `receipt.list` and `runtime-state.json`
+
+Use `--print-plaintext` only when you explicitly need decrypted message bodies in logs.
+
+## Layout
 
 ```
 plenipo/
+├── agent/          # plenipo-agent CLI
+├── runtime/        # PlenipoAgentRuntime v0
 ├── mcp/
 ├── client/
-├── did/
+├── identity/
 ├── crypto/
 └── payments/
 examples/
 tests/
 ```
 
-## Installation (target)
+## Installation (local)
 
 ```bash
-pip install plenipo-mcp
+pip install -e ".[dev]"
 ```
 
 ### Local MCP (agent-first)
@@ -70,6 +104,8 @@ skill = PlenipoMCP(
 )
 ```
 
+Production wallet funding, x402 auto-topup, and marketplace features are not part of Runtime v0.
+
 ## Environment Variables
 
 | Variable | Description |
@@ -90,9 +126,22 @@ pip install -e ".[dev]"
 pytest
 ruff check .
 python -m plenipo.mcp
+plenipo-agent run --print-events
 ```
 
 Requires **Python 3.11+**.
+
+### E2E scripts (with Core + Registry running)
+
+```bash
+python scripts/test-two-agent-messaging.py
+python scripts/test-two-agent-messaging.py --use-runtime
+python scripts/test-agent-runtime-reconnect.py
+```
+
+## TypeScript parity
+
+The TypeScript SDK exposes `listReceipts()` and receipt billing types. A full long-lived `AgentRuntime` in TypeScript is **not** implemented in v0 — use Python Runtime v0 or MCP polling.
 
 ## Contributing
 

@@ -64,6 +64,26 @@ def client() -> PlenipoClient:
     )
 
 
+async def test_list_receipts_requests_receipt_list(
+    monkeypatch: pytest.MonkeyPatch,
+    client: PlenipoClient,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_request(ref: str, event: str, payload: dict[str, Any]) -> dict[str, Any]:
+        captured.update({'ref': ref, 'event': event, 'payload': payload})
+        return {
+            'type': 'receipt.list.result',
+            'receipts': [{'envelope_id': '01J', 'charged_tokens': 1}],
+        }
+
+    monkeypatch.setattr(client, '_request_reply', fake_request)
+    receipts = await client.list_receipts(since='2026-06-08T20:56:00Z', limit=5)
+    assert receipts == [{'envelope_id': '01J', 'charged_tokens': 1}]
+    assert captured['event'] == 'receipt.list'
+    assert captured['payload'] == {'since': '2026-06-08T20:56:00Z', 'limit': 5}
+
+
 async def test_connect_authenticates_and_joins(monkeypatch: pytest.MonkeyPatch, client: PlenipoClient) -> None:
     ws = FakeWebSocket()
     monkeypatch.setattr('httpx.AsyncClient', FakeHttpClient)

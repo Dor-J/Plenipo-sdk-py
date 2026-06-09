@@ -29,6 +29,7 @@ dev = [
 
 [project.scripts]
 plenipo-mcp = "plenipo.mcp.__main__:main"
+plenipo-agent = "plenipo.agent.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["plenipo"]

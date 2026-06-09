@@ -24,6 +24,7 @@ async def test_mcp_server_tool_handlers(monkeypatch) -> None:  # type: ignore[no
         'plenipo_purchase_bundle',
         'plenipo_mandate_prepare',
         'plenipo_delivery_status',
+        'plenipo_receipts',
         'plenipo_did_create',
         'plenipo_identity',
         'plenipo_sync_identity',
@@ -64,6 +65,9 @@ async def test_mcp_server_tool_handlers(monkeypatch) -> None:  # type: ignore[no
 
         async def get_balance(self) -> int:
             return 42
+
+        async def list_receipts(self, *, since: str | None = None, limit: int = 100) -> list[dict[str, object]]:
+            return [{'envelope_id': '01J', 'charged_tokens': 1}]
 
     runtime = Runtime()
     monkeypatch.setattr('plenipo.mcp.runtime.get_mcp_runtime', lambda: runtime)
@@ -112,6 +116,7 @@ async def test_mcp_server_tool_handlers(monkeypatch) -> None:  # type: ignore[no
         {'agent_did': 'did:web:agent.local', 'operator_did': 'did:web:operator.local'},
     )
     assert 'delivered' in await call('plenipo_delivery_status', {'envelope_id': '01J'})
+    assert '01J' in await call('plenipo_receipts', {'limit': 1})
     assert 'did:web:agent.local' in await call('plenipo_did_create', {'domain': 'agent.local'})
 
     async def fake_ensure_identity():

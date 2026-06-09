@@ -155,6 +155,17 @@ class PlenipoMCP:
                     },
                 ),
                 Tool(
+                    name='plenipo_receipts',
+                    description='List persisted delivery receipts with billing metadata',
+                    inputSchema={
+                        'type': 'object',
+                        'properties': {
+                            'since': {'type': 'string'},
+                            'limit': {'type': 'integer'},
+                        },
+                    },
+                ),
+                Tool(
                     name='plenipo_mandate_prepare',
                     description='Prepare unsigned mandate JSON for operator signing',
                     inputSchema={
@@ -260,6 +271,16 @@ class PlenipoMCP:
                     args['envelope_id'],
                 )
                 return [TextContent(type='text', text=str(status))]
+
+            if name == 'plenipo_receipts':
+                from plenipo.mcp.runtime import get_mcp_runtime
+
+                runtime = get_mcp_runtime()
+                receipts = await runtime.list_receipts(
+                    since=args.get('since'),
+                    limit=int(args.get('limit', 100)),
+                )
+                return [TextContent(type='text', text=json.dumps({'receipts': receipts}, indent=2))]
 
             if name == 'plenipo_did_create':
                 from plenipo.did import create_did_document

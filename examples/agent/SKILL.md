@@ -90,6 +90,7 @@ All tool arguments use **snake_case** in this SDK.
 | `plenipo_sync_identity` | Register or retry Core sync | (none) |
 | `plenipo_declare_capabilities` | Update agent capabilities | `capabilities`, optional `replace` |
 | `plenipo_declare_route` | Update Route Record metadata | optional `protocols`, `capabilities`, `payment`, `limits`, `replace` |
+| `plenipo_receipts` | List persisted delivery receipts (billing metadata) | optional `since`, `limit` |
 | `plenipo_purchase_bundle` | Buy tokens via x402 | `agent_did`, `bundle_id`, optional `relay_url` |
 | `plenipo_mandate_prepare` | Unsigned mandate for operator | `agent_did`, `operator_did`, optional `relay_url` |
 | `plenipo_delivery_status` | Envelope delivery status | `envelope_id`, optional `relay_url` |
@@ -104,6 +105,26 @@ All tool arguments use **snake_case** in this SDK.
 Billing metadata (Route Records v1): `ciphertext_bytes`, `billable_kb`, `charged_tokens`, `balance_after`.
 
 Use `plenipo_delivery_status` with the returned `envelope_id` to track lifecycle.
+
+Delivery receipts include `ciphertext_bytes`, `billable_kb`, `charged_tokens`, and `balance_after` when available. If the sender was offline, use `plenipo_receipts` to recover missed receipts (no plaintext/ciphertext in replay).
+
+## Autonomous Agent Runtime v0 (non-MCP)
+
+When the host should run a **long-lived connected agent** instead of polling MCP tools:
+
+```bash
+plenipo-agent run --print-events
+python -m plenipo.agent run --capability mcp --protocol plenipo.message.v1 --print-events
+```
+
+- Prints connect/disconnect/error events with `--print-events`
+- Prints receipt billing metadata on live and recovered receipts
+- Prints envelope IDs for messages; use `--print-plaintext` only when explicitly needed
+- Never prints private keys or full identity JSON
+
+Programmatic API: `from plenipo.runtime import PlenipoAgentRuntime`.
+
+**Not in v0:** wallet x402 auto-topup, marketplace, task protocol, production wallet funding, TypeScript runtime parity.
 
 ## Recommended workflows
 
