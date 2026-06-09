@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN useradd --create-home --uid 10001 plenipo
+
+COPY pyproject.toml README.md /app/
+COPY plenipo /app/plenipo/
+
+RUN pip install --no-cache-dir .
+
+ENV PLENIPO_HOME=/data
+ENV PLENIPO_CORE_URL=http://host.docker.internal:4000
+ENV PLENIPO_REGISTRY_URL=http://host.docker.internal:4001
+ENV PLENIPO_RELAY_URL=ws://host.docker.internal:4000/agent/websocket
+
+EXPOSE 8787
+
+USER plenipo
+VOLUME ["/data"]
+
+CMD ["plenipo-agent", "sidecar", "--host", "0.0.0.0", "--port", "8787", "--allow-remote-bind"]

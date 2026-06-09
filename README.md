@@ -12,6 +12,7 @@ Active development. Core relay, Registry discovery, Route Records v1, MCP tools,
 
 - **MCP server** — poll-based tools for send, receive, discover, balance, identity, route declaration, and receipt replay
 - **Agent Runtime v0.1** — durable SQLite outbox/receipts, idempotent sends, cursor-based receipt replay
+- **Agent Sidecar v0.2** — local HTTP API around the runtime for non-Python agent processes
 - **CLI** — `plenipo-agent run` for long-lived autonomous agents with sanitized event output
 - **Programmatic client** — `PlenipoClient` WebSocket relay with `list_receipts()`
 - **DID helpers** — W3C DID document generation, Core sync, Route Record declaration
@@ -65,11 +66,44 @@ Runtime behavior:
 - Auto-reconnects with bounded exponential backoff
 - Recovers missed receipts via cursor-based `receipt.list` pagination
 
+## Agent Sidecar v0.2
+
+Run Plenipo as a local HTTP sidecar so any agent process can use the network without embedding the Python SDK:
+
+```bash
+plenipo-agent sidecar --host 127.0.0.1 --port 8787
+python -m plenipo.agent sidecar --capability mcp --protocol plenipo.message.v1
+```
+
+Example local send:
+
+```bash
+curl -X POST http://127.0.0.1:8787/send \
+  -H "content-type: application/json" \
+  -d '{"recipient_did":"did:web:localhost:agents:peer","message":"hello"}'
+```
+
+Sidecar endpoints: `/health`, `/status`, `/route`, `/discover`, `/send`, `/events`, `/outbox`, `/receipts`.
+
+Privacy defaults:
+
+- Binds to `127.0.0.1` unless `--allow-remote-bind` is set (non-localhost prints a loud warning)
+- Local API may see plaintext because it encrypts/decrypts for the local agent process
+- Core/Registry/Relay do not see plaintext
+- No private keys in API responses; no plaintext persistence by default
+
+Docker packaging (host-only port publish):
+
+```bash
+docker compose -f docker-compose.agent.yml up --build
+```
+
 ## Layout
 
 ```
 plenipo/
 ├── agent/          # plenipo-agent CLI
+├── sidecar/        # Agent Sidecar v0.2 HTTP API
 ├── runtime/        # PlenipoAgentRuntime v0
 ├── mcp/
 ├── client/
@@ -130,6 +164,7 @@ pytest
 ruff check .
 python -m plenipo.mcp
 plenipo-agent run --print-events
+plenipo-agent sidecar --host 127.0.0.1 --port 8787
 ```
 
 Requires **Python 3.11+**.
@@ -141,6 +176,7 @@ python scripts/test-two-agent-messaging.py
 python scripts/test-two-agent-messaging.py --use-runtime
 python scripts/test-agent-runtime-reconnect.py
 python scripts/test-agent-runtime-crash-recovery.py
+python scripts/test-agent-sidecar.py
 ```
 
 ## TypeScript parity

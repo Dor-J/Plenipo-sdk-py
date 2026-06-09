@@ -1,4 +1,4 @@
-"""Command-line interface for Agent Runtime v0.1."""
+"""Command-line interface for Agent Runtime v0.1 and Sidecar v0.2."""
 
 from __future__ import annotations
 
@@ -35,6 +35,21 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser('status', help='Show runtime status without secrets')
     subparsers.add_parser('outbox', help='List sanitized outbox rows')
     subparsers.add_parser('receipts', help='List sanitized receipt rows')
+
+    sidecar_parser = subparsers.add_parser('sidecar', help='Run local HTTP sidecar API')
+    sidecar_parser.add_argument('--host', default='127.0.0.1', help='Bind host (default 127.0.0.1)')
+    sidecar_parser.add_argument('--port', type=int, default=8787, help='Bind port (default 8787)')
+    sidecar_parser.add_argument('--capability', default='mcp', help='Declared capability label')
+    sidecar_parser.add_argument(
+        '--protocol',
+        default='plenipo.message.v1',
+        help='Declared protocol',
+    )
+    sidecar_parser.add_argument(
+        '--allow-remote-bind',
+        action='store_true',
+        help='Allow binding to non-localhost interfaces',
+    )
     return parser
 
 
@@ -188,5 +203,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == 'receipts':
         return _show_receipts()
 
+    if args.command == 'sidecar':
+        return _run_sidecar(args)
+
     parser.error(f'unknown command: {args.command}')
     return 2
+
+
+def _run_sidecar(args: argparse.Namespace) -> int:
+    from plenipo.sidecar.config import SidecarConfig, validate_bind_host
+    from plenipo.sidecar.server import run_sidecar
+
+    _apply_local_defaults()
+    config = SidecarConfig(
+        host=args.host,
+        port=args.port,
+        capability=args.capability,
+        protocol=args.protocol,
+        allow_remote_bind=args.allow_remote_bind,
+    )
+    try:
+        validate_bind_host(config.host, allow_remote_bind=config.allow_remote_bind)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    run_sidecar(config)
+    return 0
