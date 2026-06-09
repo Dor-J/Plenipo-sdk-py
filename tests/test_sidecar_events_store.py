@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -29,6 +30,33 @@ async def test_list_sidecar_events_by_after_id(tmp_path, monkeypatch) -> None:
     rows = store.list_sidecar_events(after_id=first, limit=10)
     assert len(rows) == 1
     assert rows[0].id == second
+
+
+@pytest.mark.asyncio
+async def test_wait_for_events_recovers_without_notify(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    store = RuntimeStore()
+    service = DurableEventService(store=store)
+
+    async def insert_later() -> None:
+        await asyncio.sleep(0.05)
+        store.insert_sidecar_event(
+            event_type='delivery_receipt',
+            envelope_id='01LATE',
+            payload={'type': 'delivery_receipt', 'envelope_id': '01LATE'},
+        )
+
+    task = asyncio.create_task(insert_later())
+    events, next_after_id = await service.wait_for_events(
+        after_id=0,
+        timeout_ms=500,
+        limit=10,
+        include_plaintext=False,
+    )
+    await task
+    assert len(events) == 1
+    assert events[0]['envelope_id'] == '01LATE'
+    assert next_after_id >= 1
 
 
 @pytest.mark.asyncio

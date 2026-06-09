@@ -66,7 +66,7 @@ Runtime behavior:
 - Auto-reconnects with bounded exponential backoff
 - Recovers missed receipts via cursor-based `receipt.list` pagination
 
-## Agent Sidecar v0.3.0
+## Agent Sidecar v0.3.1
 
 Run Plenipo as a local HTTP sidecar so any agent process can use the network without embedding the Python SDK.
 
@@ -93,6 +93,15 @@ python -m plenipo.agent sidecar --capability mcp --protocol plenipo.message.v1
 - CORS disabled by default; allow browser origins with `--allow-origin` or `PLENIPO_SIDECAR_ALLOWED_ORIGINS`
 - `--no-auth` is localhost-only development mode (refuses non-localhost bind)
 - Local API may see plaintext; Core/Registry/Relay never do; bodies/tokens are not logged by default
+
+### WebSocket handshake debug (sanitized)
+
+From the monorepo root (Core must be running). Prints relay URL, DID, DID document URL, query key order, and a signature-redacted final URL — never private keys or bearer tokens.
+
+```bash
+python scripts/debug-ws-handshake.py
+python scripts/debug-ws-handshake.py --connect
+```
 
 Example authenticated request:
 

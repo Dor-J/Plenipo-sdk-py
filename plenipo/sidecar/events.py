@@ -48,13 +48,19 @@ class DurableEventService:
 
             remaining = deadline - loop.time()
             if remaining <= 0:
-                return [], after_id
+                break
 
             async with self._condition:
                 try:
                     await asyncio.wait_for(self._condition.wait(), timeout=remaining)
                 except asyncio.TimeoutError:
-                    return [], after_id
+                    # Missed notify or event arrived during wait: re-check SQLite below.
+                    pass
+
+        rows = self.store.list_sidecar_events(after_id=after_id, limit=limit)
+        if rows:
+            return self._rows_to_api(rows, include_plaintext=include_plaintext), rows[-1].id
+        return [], after_id
 
     def list_events_after(
         self,

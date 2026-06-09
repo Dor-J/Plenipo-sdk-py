@@ -14,7 +14,7 @@ from plenipo.runtime.state import load_runtime_state
 from plenipo.runtime.store import OutboxRecord, ReceiptRecord, RuntimeStore, SidecarEventRecord
 from plenipo.runtime.inbox_crypto import decrypt_plaintext
 
-SIDECAR_VERSION = '0.3.0'
+SIDECAR_VERSION = '0.3.1'
 SERVICE_NAME = 'plenipo-agent-sidecar'
 
 SECRET_KEYS = frozenset(
@@ -211,6 +211,15 @@ def build_status_payload(
             'registry_url': identity.registry_url or os.environ.get('PLENIPO_REGISTRY_URL', ''),
             'relay_url': identity.relay_url or os.environ.get('PLENIPO_RELAY_URL', ''),
         },
+    }
+
+
+def events_response(events: list[dict[str, Any]], *, next_after_id: int) -> dict[str, Any]:
+    """Builds the canonical `/events` response envelope."""
+    return {
+        'events': events,
+        'next_after_id': next_after_id,
+        'since_id': next_after_id,
     }
 
 

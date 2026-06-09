@@ -7,7 +7,9 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any, Literal, TypedDict, cast
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
+
+from plenipo.client.relay_connect_url import build_relay_connect_url
 
 import httpx
 import websockets
@@ -98,17 +100,14 @@ class PlenipoClient:
             ).json()
 
         nonce = challenge['nonce']
-        signature = self._signing.sign(base64url.decode(nonce)).signature
-        query = '&'.join(
-            [
-                f'did={quote(self.did, safe="")}',
-                f'nonce={quote(nonce, safe="")}',
-                f'signature={quote(base64url.encode(signature), safe="")}',
-                f'did_document_url={quote(self.did_document_url, safe="")}',
-                'vsn=2.0.0',
-            ]
+        signature = base64url.encode(self._signing.sign(base64url.decode(nonce)).signature)
+        ws_target = build_relay_connect_url(
+            self._ws_url,
+            did=self.did,
+            nonce=nonce,
+            signature=signature,
+            did_document_url=self.did_document_url,
         )
-        ws_target = f'{self._ws_url}?{query}'
         self._ws = await websockets.connect(ws_target)
         await self._send_phoenix(self._join_ref, None, 'relay:inbox', 'phx_join', {})
         joined = asyncio.Event()
