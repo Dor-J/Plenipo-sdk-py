@@ -54,6 +54,32 @@ class ReceiptRecord:
     delivered_at: str | None
 
 
+@dataclass(frozen=True)
+class SidecarEventRecord:
+    """Durable local sidecar event row."""
+
+    id: int
+    event_type: str
+    envelope_id: str | None
+    created_at: str
+    payload_json: str
+    delivered_to_client_at: str | None
+
+
+@dataclass(frozen=True)
+class InboxMessageRecord:
+    """Encrypted-at-rest inbound message row."""
+
+    envelope_id: str
+    sender_did: str
+    recipient_did: str
+    received_at: str
+    plaintext_ciphertext: str
+    plaintext_nonce: str
+    plaintext_alg: str
+    metadata_json: str
+
+
 class RuntimeStore:
     """Local SQLite store for outbox, receipts, and runtime cursors."""
 
@@ -102,6 +128,30 @@ class RuntimeStore:
             CREATE TABLE IF NOT EXISTS runtime_state (
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sidecar_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              event_type TEXT NOT NULL,
+              envelope_id TEXT,
+              created_at TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              delivered_to_client_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sidecar_events_id ON sidecar_events(id);
+            CREATE INDEX IF NOT EXISTS idx_sidecar_events_envelope
+              ON sidecar_events(envelope_id, event_type);
+
+            CREATE TABLE IF NOT EXISTS inbox_messages (
+              envelope_id TEXT PRIMARY KEY,
+              sender_did TEXT NOT NULL,
+              recipient_did TEXT NOT NULL,
+              received_at TEXT NOT NULL,
+              plaintext_ciphertext TEXT NOT NULL,
+              plaintext_nonce TEXT NOT NULL,
+              plaintext_alg TEXT NOT NULL,
+              metadata_json TEXT NOT NULL
             );
             """
         )
@@ -292,6 +342,127 @@ class RuntimeStore:
         if last_receipt_seen_at and not self.get_state('last_receipt_seen_at'):
             self.set_state('last_receipt_seen_at', last_receipt_seen_at)
 
+    def insert_sidecar_event(
+        self,
+        *,
+        event_type: str,
+        envelope_id: str | None,
+        payload: dict[str, Any],
+    ) -> int:
+        """Inserts a durable sidecar event and returns its monotonic id."""
+        cursor = self._conn.execute(
+            """
+            INSERT INTO sidecar_events (event_type, envelope_id, created_at, payload_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                event_type,
+                envelope_id,
+                _utc_now_iso(),
+                json.dumps(payload, separators=(',', ':')),
+            ),
+        )
+        self._conn.commit()
+        return int(cursor.lastrowid or 0)
+
+    def has_sidecar_event(self, envelope_id: str, event_type: str) -> bool:
+        """Returns whether a sidecar event already exists for envelope/type."""
+        row = self._conn.execute(
+            """
+            SELECT id FROM sidecar_events
+            WHERE envelope_id = ? AND event_type = ?
+            """,
+            (envelope_id, event_type),
+        ).fetchone()
+        return row is not None
+
+    def list_sidecar_events(self, *, after_id: int = 0, limit: int = 100) -> list[SidecarEventRecord]:
+        """Lists durable sidecar events with id greater than after_id."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM sidecar_events
+            WHERE id > ?
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (after_id, limit),
+        ).fetchall()
+        return [_row_to_sidecar_event(row) for row in rows]
+
+    def mark_sidecar_event_delivered(self, event_id: int) -> None:
+        """Marks a sidecar event as delivered to a local client."""
+        self._conn.execute(
+            """
+            UPDATE sidecar_events SET delivered_to_client_at = ?
+            WHERE id = ?
+            """,
+            (_utc_now_iso(), event_id),
+        )
+        self._conn.commit()
+
+    def count_inbox_messages(self) -> int:
+        """Returns the number of encrypted inbox rows."""
+        row = self._conn.execute('SELECT COUNT(*) AS count FROM inbox_messages').fetchone()
+        return int(row['count']) if row is not None else 0
+
+    def insert_inbox_message(
+        self,
+        *,
+        envelope_id: str,
+        sender_did: str,
+        recipient_did: str,
+        received_at: str,
+        plaintext_ciphertext: str,
+        plaintext_nonce: str,
+        plaintext_alg: str,
+        metadata: dict[str, Any],
+    ) -> bool:
+        """Inserts an encrypted inbox row. Returns False if duplicate."""
+        existing = self._conn.execute(
+            'SELECT envelope_id FROM inbox_messages WHERE envelope_id = ?',
+            (envelope_id,),
+        ).fetchone()
+        if existing is not None:
+            return False
+        self._conn.execute(
+            """
+            INSERT INTO inbox_messages (
+              envelope_id, sender_did, recipient_did, received_at,
+              plaintext_ciphertext, plaintext_nonce, plaintext_alg, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                envelope_id,
+                sender_did,
+                recipient_did,
+                received_at,
+                plaintext_ciphertext,
+                plaintext_nonce,
+                plaintext_alg,
+                json.dumps(metadata, separators=(',', ':')),
+            ),
+        )
+        self._conn.commit()
+        return True
+
+    def get_inbox_message(self, envelope_id: str) -> InboxMessageRecord | None:
+        """Returns a single encrypted inbox row."""
+        row = self._conn.execute(
+            'SELECT * FROM inbox_messages WHERE envelope_id = ?',
+            (envelope_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _row_to_inbox(row)
+
+    def list_inbox(self, *, limit: int = 100) -> list[InboxMessageRecord]:
+        """Lists encrypted inbox rows (metadata only in record)."""
+        rows = self._conn.execute(
+            'SELECT * FROM inbox_messages ORDER BY received_at DESC LIMIT ?',
+            (limit,),
+        ).fetchall()
+        return [_row_to_inbox(row) for row in rows]
+
 
 def _optional_int(value: Any) -> int | None:
     if value is None:
@@ -327,4 +498,28 @@ def _row_to_receipt(row: sqlite3.Row) -> ReceiptRecord:
         balance_after=row['balance_after'],
         received_at=row['received_at'],
         delivered_at=row['delivered_at'],
+    )
+
+
+def _row_to_sidecar_event(row: sqlite3.Row) -> SidecarEventRecord:
+    return SidecarEventRecord(
+        id=int(row['id']),
+        event_type=str(row['event_type']),
+        envelope_id=row['envelope_id'],
+        created_at=str(row['created_at']),
+        payload_json=str(row['payload_json']),
+        delivered_to_client_at=row['delivered_to_client_at'],
+    )
+
+
+def _row_to_inbox(row: sqlite3.Row) -> InboxMessageRecord:
+    return InboxMessageRecord(
+        envelope_id=str(row['envelope_id']),
+        sender_did=str(row['sender_did']),
+        recipient_did=str(row['recipient_did']),
+        received_at=str(row['received_at']),
+        plaintext_ciphertext=str(row['plaintext_ciphertext']),
+        plaintext_nonce=str(row['plaintext_nonce']),
+        plaintext_alg=str(row['plaintext_alg']),
+        metadata_json=str(row['metadata_json']),
     )

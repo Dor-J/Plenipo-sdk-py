@@ -72,6 +72,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help='Allowed browser Origin header (repeatable)',
     )
 
+    events_parser = subparsers.add_parser('events', help='Poll durable sidecar events')
+    events_parser.add_argument('--after-id', type=int, default=0, help='Event cursor')
+    events_parser.add_argument('--timeout-ms', type=int, default=1000, help='Long-poll timeout')
+    events_parser.add_argument('--limit', type=int, default=100, help='Max events')
+    events_parser.add_argument(
+        '--print-plaintext',
+        action='store_true',
+        help='Print decrypted message plaintext (opt-in)',
+    )
+
+    subparsers.add_parser('inbox', help='List encrypted local inbox metadata')
+
     token_parser = subparsers.add_parser('sidecar-token', help='Show sidecar token file status')
     token_parser.add_argument(
         '--show',
@@ -237,8 +249,58 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == 'sidecar-token':
         return _show_sidecar_token(args)
 
+    if args.command == 'events':
+        return _show_events(args)
+
+    if args.command == 'inbox':
+        return _show_inbox()
+
     parser.error(f'unknown command: {args.command}')
     return 2
+
+
+def _show_events(args: argparse.Namespace) -> int:
+    from plenipo.sidecar.client import PlenipoSidecarClient
+
+    with PlenipoSidecarClient.from_env() as client:
+        body = client.events(
+            after_id=args.after_id,
+            timeout_ms=args.timeout_ms,
+            limit=args.limit,
+            include_plaintext=args.print_plaintext,
+        )
+        for event in body.get('events', []):
+            if not isinstance(event, dict):
+                continue
+            event_type = event.get('type')
+            envelope_id = event.get('envelope_id')
+            event_id = event.get('id')
+            if event_type == 'message':
+                print(
+                    f'[message] id={event_id} envelope_id={envelope_id} '
+                    f'sender={event.get("sender_did")}'
+                )
+                if args.print_plaintext and event.get('plaintext') is not None:
+                    print(event.get('plaintext'))
+            elif event_type == 'delivery_receipt':
+                print(
+                    f'[receipt] id={event_id} envelope_id={envelope_id} '
+                    f'tokens={event.get("charged_tokens")}'
+                )
+    return 0
+
+
+def _show_inbox() -> int:
+    store = RuntimeStore()
+    try:
+        for row in store.list_inbox(limit=100):
+            print(
+                f'{row.envelope_id} sender={row.sender_did} '
+                f'received_at={row.received_at} has_plaintext=true'
+            )
+        return 0
+    finally:
+        store.close()
 
 
 def _show_sidecar_token(args: argparse.Namespace) -> int:

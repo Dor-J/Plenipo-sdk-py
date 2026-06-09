@@ -65,7 +65,7 @@ async def _startup_sidecar(config: SidecarConfig) -> None:
     runtime._identity = updated
     runtime._route_declared = True
 
-    event_buffer = EventBuffer(max_size=config.event_buffer_size)
+    event_buffer = EventBuffer(store=runtime.store)
     consumer_task = asyncio.create_task(consume_runtime_events(runtime.events(), event_buffer))
 
     token, token_path, generated = resolve_sidecar_token(

@@ -144,7 +144,7 @@ def sidecar_setup(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     runtime = FakeRuntime(_identity=_fake_identity(tmp_path))
     runtime._store = RuntimeStore(tmp_path / 'runtime.sqlite')
     runtime._client = type('Conn', (), {'connected': True})()
-    buffer = EventBuffer(max_size=100)
+    buffer = EventBuffer(store=runtime._store)
     security = _make_security()
     app = SidecarApp(runtime, buffer, security).create_app()
     client = TestClient(app)
@@ -263,22 +263,48 @@ def test_receipts_returns_sanitized_rows(sidecar_setup) -> None:  # type: ignore
 
 
 def test_events_endpoint_returns_buffered_events(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
-    client, _runtime, buffer, _security = sidecar_setup
-    buffer.append_runtime_event(
-        MessageEvent(envelope_id='01MSG', sender_did='did:web:localhost:agents:sender', plaintext='hi')
+    from plenipo.runtime.inbox_crypto import PLAINTEXT_ALG, encrypt_plaintext, resolve_sidecar_store_key
+
+    client, runtime, _buffer, _security = sidecar_setup
+    key = resolve_sidecar_store_key()
+    ciphertext_b64, nonce_b64 = encrypt_plaintext('hi', key)
+    runtime._store.insert_inbox_message(
+        envelope_id='01MSG',
+        sender_did='did:web:localhost:agents:sender',
+        recipient_did='did:web:localhost:agents:test',
+        received_at='2026-06-09T00:00:00Z',
+        plaintext_ciphertext=ciphertext_b64,
+        plaintext_nonce=nonce_b64,
+        plaintext_alg=PLAINTEXT_ALG,
+        metadata={},
+    )
+    runtime._store.insert_sidecar_event(
+        event_type='message',
+        envelope_id='01MSG',
+        payload={
+            'type': 'message',
+            'envelope_id': '01MSG',
+            'sender_did': 'did:web:localhost:agents:sender',
+            'recipient_did': 'did:web:localhost:agents:test',
+            'received_at': '2026-06-09T00:00:00Z',
+            'plaintext_ref': 'inbox:01MSG',
+        },
     )
     response = client.get('/events?timeout_ms=100&limit=10', headers=_auth_headers())
     assert response.status_code == 200
-    assert response.json()['events'][0]['plaintext'] == 'hi'
+    body = response.json()
+    assert body['events'][0]['plaintext'] == 'hi'
+    assert body['next_after_id'] == body['events'][0]['id']
 
 
 def test_no_auth_allows_requests_locally(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
     runtime = FakeRuntime(_identity=_fake_identity(tmp_path))
     runtime._client = type('Conn', (), {'connected': True})()
+    store = RuntimeStore(tmp_path / 'runtime.sqlite')
     app = SidecarApp(
         runtime,
-        EventBuffer(),
+        EventBuffer(store=store),
         _make_security(auth_enabled=False, token=None),
     ).create_app()
     client = TestClient(app)
@@ -296,6 +322,7 @@ def test_cli_sidecar_rejects_no_auth_remote_bind(monkeypatch) -> None:  # type: 
 
 def test_token_file_generated_with_restrictive_permissions(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    monkeypatch.delenv('PLENIPO_SIDECAR_TOKEN', raising=False)
     token, path, generated = resolve_sidecar_token(generate_if_missing=True)
     assert generated is True
     assert token is not None
@@ -361,7 +388,8 @@ def test_cors_allowed_origin_accepted(tmp_path, monkeypatch) -> None:  # type: i
     runtime = FakeRuntime(_identity=_fake_identity(tmp_path))
     runtime._client = type('Conn', (), {'connected': True})()
     security = _make_security(allowed_origins=frozenset({'http://127.0.0.1:3000'}))
-    app = SidecarApp(runtime, EventBuffer(), security).create_app()
+    store = RuntimeStore(tmp_path / 'runtime.sqlite')
+    app = SidecarApp(runtime, EventBuffer(store=store), security).create_app()
     client = TestClient(app)
     response = client.get(
         '/status',
@@ -431,24 +459,33 @@ def test_sidecar_client_calls_status_and_send(monkeypatch) -> None:  # type: ign
 
 
 @pytest.mark.asyncio
-async def test_events_long_poll_returns_message_and_receipt() -> None:
-    buffer = EventBuffer(max_size=100)
+async def test_events_long_poll_returns_message_and_receipt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    store = RuntimeStore(tmp_path / 'runtime.sqlite')
+    buffer = EventBuffer(store=store)
 
     async def produce() -> None:
         await asyncio.sleep(0.05)
-        buffer.append_runtime_event(
-            MessageEvent(
-                envelope_id='01MSG',
-                sender_did='did:web:localhost:agents:sender',
-                plaintext='hello',
-            )
+        store.insert_sidecar_event(
+            event_type='delivery_receipt',
+            envelope_id='01MSG',
+            payload={
+                'type': 'delivery_receipt',
+                'envelope_id': '01MSG',
+                'charged_tokens': 1,
+            },
         )
-        async with buffer._condition:
-            buffer._condition.notify_all()
+        await buffer.notify()
 
     producer = asyncio.create_task(produce())
-    matches = await buffer.wait_for_events(since_id=0, timeout_ms=2000, limit=10)
-    assert matches[0].payload['type'] == 'message'
+    events, next_after_id = await buffer.wait_for_events(
+        after_id=0,
+        timeout_ms=2000,
+        limit=10,
+        include_plaintext=False,
+    )
+    assert events[0]['type'] == 'delivery_receipt'
+    assert next_after_id == events[0]['id']
     await producer
 
 

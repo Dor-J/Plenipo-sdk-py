@@ -115,21 +115,71 @@ class PlenipoSidecarClient:
     def events(
         self,
         *,
+        after_id: int = 0,
+        since_id: int | None = None,
         timeout_ms: int = 1000,
-        since_id: int = 0,
-        limit: int = 50,
+        limit: int = 100,
+        include_plaintext: bool = True,
     ) -> dict[str, Any]:
-        """Long-polls buffered runtime events."""
+        """Long-polls durable runtime events."""
+        cursor = after_id if since_id is None else since_id
         return self._request(
             'GET',
             '/events',
             params={
+                'after_id': cursor,
                 'timeout_ms': timeout_ms,
-                'since_id': since_id,
                 'limit': limit,
+                'include_plaintext': str(include_plaintext).lower(),
             },
             timeout=max(self._timeout, (timeout_ms / 1000.0) + 5.0),
         )
+
+    def stream_events(
+        self,
+        *,
+        after_id: int = 0,
+        include_plaintext: bool = True,
+    ):
+        """Yields durable events from the SSE stream."""
+        headers = self._auth_headers()
+        headers['Accept'] = 'text/event-stream'
+        params = {
+            'after_id': after_id,
+            'include_plaintext': str(include_plaintext).lower(),
+        }
+        with self._client.stream(
+            'GET',
+            '/events/stream',
+            params=params,
+            headers=headers,
+            timeout=None,
+        ) as response:
+            if response.status_code >= 400:
+                raise SidecarClientError(
+                    f'GET /events/stream failed with {response.status_code}: {response.text}'
+                )
+            event_id = after_id
+            event_type = 'message'
+            data_lines: list[str] = []
+            for line in response.iter_lines():
+                if line is None:
+                    continue
+                if line == '':
+                    if data_lines:
+                        import json
+
+                        payload = json.loads('\n'.join(data_lines))
+                        yield payload
+                    data_lines = []
+                    continue
+                if line.startswith('id:'):
+                    event_id = int(line.split(':', 1)[1].strip())
+                elif line.startswith('event:'):
+                    event_type = line.split(':', 1)[1].strip()
+                elif line.startswith('data:'):
+                    data_lines.append(line.split(':', 1)[1].strip())
+            _ = (event_id, event_type)
 
     def outbox(self, *, status: str | None = None, limit: int = 100) -> dict[str, Any]:
         """Returns sanitized outbox rows."""

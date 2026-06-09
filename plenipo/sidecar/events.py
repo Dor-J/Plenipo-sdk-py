@@ -1,80 +1,110 @@
-"""In-memory event buffer and sidecar application state."""
+"""Durable sidecar event log with long-poll and SSE wakeups."""
 
 from __future__ import annotations
 
 import asyncio
-from collections import deque
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
 from plenipo.runtime.events import AgentEvent
-from plenipo.sidecar.models import event_to_dict
+from plenipo.runtime.store import RuntimeStore, SidecarEventRecord
+from plenipo.runtime.inbox_crypto import (
+    SidecarStoreKeyError,
+    read_sidecar_store_key,
+)
+from plenipo.sidecar.models import sidecar_event_to_api_dict
 
 
 @dataclass
-class BufferedEvent:
-    """A sidecar event with monotonic sequence id."""
+class DurableEventService:
+    """SQLite-backed durable event service with long-poll support."""
 
-    event_id: int
-    payload: dict[str, Any]
-
-
-@dataclass
-class EventBuffer:
-    """Ring buffer of recent sidecar events with long-poll support."""
-
-    max_size: int = 100
-    _events: deque[BufferedEvent] = field(default_factory=deque)
-    _next_id: int = field(default=1)
+    store: RuntimeStore
     _condition: asyncio.Condition = field(default_factory=asyncio.Condition)
 
-    def append_runtime_event(self, event: AgentEvent) -> dict[str, Any] | None:
-        """Appends a runtime event when it maps to a public sidecar payload."""
-        payload = event_to_dict(event)
-        if payload is None:
-            return None
-
-        buffered = BufferedEvent(event_id=self._next_id, payload=payload)
-        self._next_id += 1
-        self._events.append(buffered)
-        while len(self._events) > self.max_size:
-            self._events.popleft()
-        return payload
+    async def notify(self) -> None:
+        """Wakes long-poll waiters after a new durable event is persisted."""
+        async with self._condition:
+            self._condition.notify_all()
 
     async def wait_for_events(
         self,
         *,
-        since_id: int,
+        after_id: int,
         timeout_ms: int,
         limit: int,
-    ) -> list[BufferedEvent]:
-        """Long-polls until new events exist or timeout expires."""
+        include_plaintext: bool = True,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Long-polls durable events with id greater than after_id."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + (timeout_ms / 1000.0)
 
         while True:
-            matches = [item for item in self._events if item.event_id > since_id][:limit]
-            if matches:
-                return matches
+            rows = self.store.list_sidecar_events(after_id=after_id, limit=limit)
+            if rows:
+                return self._rows_to_api(rows, include_plaintext=include_plaintext), rows[-1].id
 
             remaining = deadline - loop.time()
             if remaining <= 0:
-                return []
+                return [], after_id
 
             async with self._condition:
                 try:
                     await asyncio.wait_for(self._condition.wait(), timeout=remaining)
                 except asyncio.TimeoutError:
-                    return []
+                    return [], after_id
+
+    def list_events_after(
+        self,
+        *,
+        after_id: int,
+        limit: int,
+        include_plaintext: bool = True,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Returns durable events without blocking."""
+        rows = self.store.list_sidecar_events(after_id=after_id, limit=limit)
+        if not rows:
+            return [], after_id
+        return self._rows_to_api(rows, include_plaintext=include_plaintext), rows[-1].id
+
+    def _rows_to_api(
+        self,
+        rows: list[SidecarEventRecord],
+        *,
+        include_plaintext: bool,
+    ) -> list[dict[str, Any]]:
+        store_key = None
+        if include_plaintext and any(row.event_type == 'message' for row in rows):
+            if self.store.count_inbox_messages() > 0:
+                store_key = read_sidecar_store_key()
+                if store_key is None:
+                    raise SidecarStoreKeyError(
+                        'sidecar store key missing; cannot decrypt encrypted local inbox',
+                    )
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            events.append(
+                sidecar_event_to_api_dict(
+                    row,
+                    store=self.store,
+                    include_plaintext=include_plaintext,
+                    store_key=store_key,
+                )
+            )
+        return events
+
+
+# Backward-compatible alias used by existing imports/tests.
+EventBuffer = DurableEventService
 
 
 async def consume_runtime_events(
     events: AsyncIterator[AgentEvent],
-    buffer: EventBuffer,
+    buffer: DurableEventService,
 ) -> None:
-    """Consumes runtime events into the sidecar buffer until cancelled."""
+    """Wakes durable event waiters when runtime emits public events."""
     async for event in events:
-        if buffer.append_runtime_event(event) is not None:
-            async with buffer._condition:
-                buffer._condition.notify_all()
+        if event.type in ('message', 'delivery_receipt'):
+            await buffer.notify()

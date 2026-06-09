@@ -85,6 +85,28 @@ def save_runtime_state(state: RuntimeState, store: RuntimeStore | None = None) -
             db.close()
 
 
+def update_message_cursor(
+    *,
+    received_at: str | None = None,
+    envelope_id: str | None = None,
+    store: RuntimeStore | None = None,
+) -> RuntimeState:
+    """Updates and persists the last seen inbound message cursor."""
+    owned = store is None
+    db = store or RuntimeStore()
+    try:
+        state = load_runtime_state(db)
+        timestamp = received_at or envelope_id
+        if timestamp:
+            state.last_message_seen_at = timestamp
+            db.set_state('last_message_seen_at', timestamp)
+        save_runtime_state(state, db)
+        return state
+    finally:
+        if owned:
+            db.close()
+
+
 def update_receipt_cursor(
     *,
     delivered_at: str | None = None,

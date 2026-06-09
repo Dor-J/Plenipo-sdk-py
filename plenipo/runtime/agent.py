@@ -26,8 +26,23 @@ from plenipo.runtime.events import (
     ErrorEvent,
     MessageEvent,
 )
-from plenipo.runtime.state import load_runtime_state, update_receipt_cursor
+from plenipo.runtime.state import (
+    load_runtime_state,
+    update_message_cursor,
+    update_receipt_cursor,
+)
 from plenipo.runtime.store import OutboxRecord, ReceiptRecord, RuntimeStore
+from plenipo.runtime.inbox_crypto import (
+    PLAINTEXT_ALG,
+    encrypt_plaintext,
+    resolve_sidecar_store_key,
+)
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
 def _optional_int(value: Any) -> int | None:
@@ -196,15 +211,7 @@ class PlenipoAgentRuntime:
                     plaintext = plain.decode('utf-8')
                 except Exception:
                     pass
-            self._events.put_nowait(
-                MessageEvent(
-                    envelope_id=str(envelope.get('envelope_id', '')),
-                    sender_did=envelope.get('sender_did'),
-                    recipient_did=envelope.get('recipient_did'),
-                    plaintext=plaintext,
-                    created_at=envelope.get('created_at'),
-                )
-            )
+            self._observe_message(envelope, plaintext=plaintext)
 
         def on_receipt(payload: dict[str, Any]) -> None:
             self._observe_receipt(payload, recovered=False)
@@ -215,6 +222,61 @@ class PlenipoAgentRuntime:
         self._client = client
         await self._recover_missed_receipts()
         self._events.put_nowait(ConnectEvent(did=self._identity.did))
+
+    def _observe_message(
+        self,
+        envelope: dict[str, Any],
+        *,
+        plaintext: str | None,
+    ) -> None:
+        envelope_id = str(envelope.get('envelope_id', ''))
+        if not envelope_id:
+            return
+
+        received_at = str(envelope.get('created_at') or _utc_now_iso())
+        sender_did = str(envelope.get('sender_did') or '')
+        recipient_did = str(envelope.get('recipient_did') or '')
+
+        if plaintext is not None and not self._store.has_sidecar_event(envelope_id, 'message'):
+            store_key = resolve_sidecar_store_key()
+            ciphertext_b64, nonce_b64 = encrypt_plaintext(plaintext, store_key)
+            self._store.insert_inbox_message(
+                envelope_id=envelope_id,
+                sender_did=sender_did,
+                recipient_did=recipient_did,
+                received_at=received_at,
+                plaintext_ciphertext=ciphertext_b64,
+                plaintext_nonce=nonce_b64,
+                plaintext_alg=PLAINTEXT_ALG,
+                metadata={'created_at': envelope.get('created_at')},
+            )
+            self._store.insert_sidecar_event(
+                event_type='message',
+                envelope_id=envelope_id,
+                payload={
+                    'type': 'message',
+                    'envelope_id': envelope_id,
+                    'sender_did': sender_did,
+                    'recipient_did': recipient_did,
+                    'received_at': received_at,
+                    'plaintext_ref': f'inbox:{envelope_id}',
+                },
+            )
+            update_message_cursor(
+                received_at=received_at,
+                envelope_id=envelope_id,
+                store=self._store,
+            )
+
+        self._events.put_nowait(
+            MessageEvent(
+                envelope_id=envelope_id,
+                sender_did=sender_did,
+                recipient_did=recipient_did,
+                plaintext=plaintext,
+                created_at=envelope.get('created_at'),
+            )
+        )
 
     def _observe_receipt(self, payload: dict[str, Any], *, recovered: bool) -> None:
         envelope_id = str(payload.get('envelope_id', ''))
@@ -236,6 +298,26 @@ class PlenipoAgentRuntime:
             envelope_id,
             delivered_at=str(payload.get('delivered_at') or payload.get('received_at') or '') or None,
         )
+        if not self._store.has_sidecar_event(envelope_id, 'delivery_receipt'):
+            receipt_payload: dict[str, Any] = {
+                'type': 'delivery_receipt',
+                'envelope_id': envelope_id,
+                'charged_tokens': _optional_int(payload.get('charged_tokens')),
+            }
+            delivered_at = payload.get('delivered_at') or payload.get('received_at')
+            if delivered_at:
+                receipt_payload['delivered_at'] = delivered_at
+            if payload.get('ciphertext_bytes') is not None:
+                receipt_payload['ciphertext_bytes'] = _optional_int(payload.get('ciphertext_bytes'))
+            if payload.get('billable_kb') is not None:
+                receipt_payload['billable_kb'] = _optional_int(payload.get('billable_kb'))
+            if payload.get('balance_after') is not None:
+                receipt_payload['balance_after'] = _optional_int(payload.get('balance_after'))
+            self._store.insert_sidecar_event(
+                event_type='delivery_receipt',
+                envelope_id=envelope_id,
+                payload=receipt_payload,
+            )
         event = self._receipt_event_from_payload(payload, recovered=recovered)
         self._events.put_nowait(event)
         update_receipt_cursor(

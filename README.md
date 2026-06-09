@@ -12,7 +12,7 @@ Active development. Core relay, Registry discovery, Route Records v1, MCP tools,
 
 - **MCP server** — poll-based tools for send, receive, discover, balance, identity, route declaration, and receipt replay
 - **Agent Runtime v0.1** — durable SQLite outbox/receipts, idempotent sends, cursor-based receipt replay
-- **Agent Sidecar v0.2.1** — authenticated local HTTP API + Python client helper
+- **Agent Sidecar v0.3.0** — durable local events, encrypted inbox, SSE, authenticated HTTP API
 - **CLI** — `plenipo-agent run` for long-lived autonomous agents with sanitized event output
 - **Programmatic client** — `PlenipoClient` WebSocket relay with `list_receipts()`
 - **DID helpers** — W3C DID document generation, Core sync, Route Record declaration
@@ -66,9 +66,19 @@ Runtime behavior:
 - Auto-reconnects with bounded exponential backoff
 - Recovers missed receipts via cursor-based `receipt.list` pagination
 
-## Agent Sidecar v0.2.1
+## Agent Sidecar v0.3.0
 
-Run Plenipo as a local HTTP sidecar so any agent process can use the network without embedding the Python SDK:
+Run Plenipo as a local HTTP sidecar so any agent process can use the network without embedding the Python SDK.
+
+v0.3 adds **durable local events** (`sidecar_events` in `runtime.sqlite`) and an **encrypted local inbox** (`inbox_messages` encrypted with `~/.plenipo/sidecar-store.key`). Core/Relay never see plaintext; the sidecar decrypts for authenticated local clients only. Plaintext is never logged.
+
+```bash
+plenipo-agent sidecar --host 127.0.0.1 --port 8787
+plenipo-agent events --after-id 0
+plenipo-agent inbox
+```
+
+`/events` query params: `after_id` (alias `since_id`), `timeout_ms`, `limit`, `include_plaintext=false` for metadata only. Response includes `next_after_id`. SSE: `GET /events/stream` with `Last-Event-ID` support.
 
 ```bash
 plenipo-agent sidecar --host 127.0.0.1 --port 8787
@@ -138,7 +148,7 @@ Or set `PLENIPO_SIDECAR_TOKEN` in compose environment.
 ```
 plenipo/
 ├── agent/          # plenipo-agent CLI
-├── sidecar/        # Agent Sidecar v0.2 HTTP API
+├── sidecar/        # Agent Sidecar v0.3 HTTP API
 ├── runtime/        # PlenipoAgentRuntime v0
 ├── mcp/
 ├── client/
@@ -212,6 +222,7 @@ python scripts/test-two-agent-messaging.py --use-runtime
 python scripts/test-agent-runtime-reconnect.py
 python scripts/test-agent-runtime-crash-recovery.py
 python scripts/test-agent-sidecar.py
+python scripts/test-agent-sidecar-durable-events.py
 ```
 
 ## TypeScript parity

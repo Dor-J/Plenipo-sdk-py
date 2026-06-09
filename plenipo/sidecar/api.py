@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from plenipo.discover import discover_agents
 from plenipo.identity.route import declare_route, route_from_document
 from plenipo.runtime import PlenipoAgentRuntime
 from plenipo.sidecar.config import SidecarSecurity
-from plenipo.sidecar.events import EventBuffer
+from plenipo.sidecar.events import DurableEventService
+from plenipo.runtime.inbox_crypto import SidecarStoreKeyError
 from plenipo.sidecar.middleware import AuthMiddleware, CorsMiddleware, RequestLoggingMiddleware
 from plenipo.sidecar.models import (
     SERVICE_NAME,
@@ -35,7 +37,7 @@ class SidecarApp:
     def __init__(
         self,
         runtime: PlenipoAgentRuntime,
-        event_buffer: EventBuffer,
+        event_buffer: DurableEventService,
         security: SidecarSecurity,
     ) -> None:
         self._runtime = runtime
@@ -53,6 +55,7 @@ class SidecarApp:
                 Route('/discover', self.discover, methods=['GET']),
                 Route('/send', self.send, methods=['POST']),
                 Route('/events', self.events, methods=['GET']),
+                Route('/events/stream', self.events_stream, methods=['GET']),
                 Route('/outbox', self.outbox, methods=['GET']),
                 Route('/receipts', self.receipts, methods=['GET']),
             ],
@@ -176,20 +179,67 @@ class SidecarApp:
         return JSONResponse(send_ack_to_dict(ack))
 
     async def events(self, request: Request) -> JSONResponse:
-        """Long-polls buffered runtime events."""
+        """Long-polls durable runtime events."""
         params = request.query_params
-        since_id = int(params.get('since_id', '0'))
-        timeout_ms = int(params.get('timeout_ms', '30000'))
-        limit = int(params.get('limit', '50'))
+        after_id = _parse_after_id(params)
+        timeout_ms = int(params.get('timeout_ms', '1000'))
+        limit = int(params.get('limit', '100'))
+        include_plaintext = _parse_bool(params.get('include_plaintext'), default=True)
 
-        matches = await self._event_buffer.wait_for_events(
-            since_id=since_id,
-            timeout_ms=max(0, min(timeout_ms, 60_000)),
-            limit=max(1, min(limit, 100)),
+        try:
+            events, next_after_id = await self._event_buffer.wait_for_events(
+                after_id=after_id,
+                timeout_ms=max(0, min(timeout_ms, 60_000)),
+                limit=max(1, min(limit, 100)),
+                include_plaintext=include_plaintext,
+            )
+        except SidecarStoreKeyError as exc:
+            return JSONResponse({'error': str(exc)}, status_code=500)
+
+        return JSONResponse(
+            {
+                'events': events,
+                'next_after_id': next_after_id,
+                'since_id': next_after_id,
+            }
         )
-        events = [item.payload for item in matches]
-        next_since_id = matches[-1].event_id if matches else since_id
-        return JSONResponse({'events': events, 'since_id': next_since_id})
+
+    async def events_stream(self, request: Request) -> StreamingResponse:
+        """Streams durable events over Server-Sent Events."""
+        params = request.query_params
+        after_id = _parse_after_id(params, request.headers.get('last-event-id'))
+        include_plaintext = _parse_bool(params.get('include_plaintext'), default=True)
+
+        async def event_generator():
+            cursor = after_id
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    events, cursor = self._event_buffer.list_events_after(
+                        after_id=cursor,
+                        limit=50,
+                        include_plaintext=include_plaintext,
+                    )
+                except SidecarStoreKeyError as exc:
+                    yield f'event: error\ndata: {json.dumps({"error": str(exc)})}\n\n'
+                    break
+
+                if not events:
+                    await asyncio.sleep(0.5)
+                    continue
+
+                for event in events:
+                    event_id = event.get('id', cursor)
+                    event_type = event.get('type', 'event')
+                    yield (
+                        f'id: {event_id}\n'
+                        f'event: {event_type}\n'
+                        f'data: {json.dumps(event, separators=(",", ":"))}\n\n'
+                    )
+                await asyncio.sleep(0.1)
+
+        return StreamingResponse(event_generator(), media_type='text/event-stream')
 
     async def outbox(self, request: Request) -> JSONResponse:
         """Returns sanitized outbox rows."""
@@ -218,6 +268,25 @@ async def _read_json_body(request: Request) -> dict[str, Any]:
     if isinstance(body, dict):
         return body
     return {}
+
+
+def _parse_after_id(params: Any, last_event_id: str | None = None) -> int:
+    if last_event_id:
+        try:
+            return int(last_event_id)
+        except ValueError:
+            pass
+    if params.get('after_id') is not None:
+        return int(params.get('after_id', '0'))
+    return int(params.get('since_id', '0'))
+
+
+def _parse_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ('1', 'true', 'yes')
 
 
 def _string_list(value: Any) -> list[str] | None:

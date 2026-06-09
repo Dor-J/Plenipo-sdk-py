@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -10,9 +11,10 @@ from plenipo.identity.route import route_from_document
 from plenipo.identity.store import AgentIdentity
 from plenipo.runtime.events import AgentEvent, DeliveryReceiptEvent, MessageEvent
 from plenipo.runtime.state import load_runtime_state
-from plenipo.runtime.store import OutboxRecord, ReceiptRecord, RuntimeStore
+from plenipo.runtime.store import OutboxRecord, ReceiptRecord, RuntimeStore, SidecarEventRecord
+from plenipo.runtime.inbox_crypto import decrypt_plaintext
 
-SIDECAR_VERSION = '0.2.1'
+SIDECAR_VERSION = '0.3.0'
 SERVICE_NAME = 'plenipo-agent-sidecar'
 
 SECRET_KEYS = frozenset(
@@ -77,6 +79,57 @@ def receipt_record_to_dict(row: ReceiptRecord) -> dict[str, Any]:
         'received_at': row.received_at,
         'delivered_at': row.delivered_at,
     }
+
+
+def sidecar_event_to_api_dict(
+    row: SidecarEventRecord,
+    *,
+    store: RuntimeStore,
+    include_plaintext: bool = True,
+    store_key: bytes | None = None,
+) -> dict[str, Any]:
+    """Maps a durable sidecar event row to an API response object."""
+    payload = json.loads(row.payload_json)
+    event_type = str(payload.get('type', row.event_type))
+    result: dict[str, Any] = {
+        'id': row.id,
+        'type': event_type,
+    }
+
+    if event_type == 'message':
+        result['envelope_id'] = payload.get('envelope_id')
+        result['sender_did'] = payload.get('sender_did')
+        result['recipient_did'] = payload.get('recipient_did')
+        result['received_at'] = payload.get('received_at')
+        plaintext_ref = payload.get('plaintext_ref')
+        if include_plaintext and isinstance(plaintext_ref, str) and plaintext_ref.startswith('inbox:'):
+            envelope_id = plaintext_ref.split(':', 1)[1]
+            inbox_row = store.get_inbox_message(envelope_id)
+            if inbox_row is not None and store_key is not None:
+                result['plaintext'] = decrypt_plaintext(
+                    inbox_row.plaintext_ciphertext,
+                    inbox_row.plaintext_nonce,
+                    store_key,
+                )
+        elif not include_plaintext:
+            result['has_plaintext'] = bool(payload.get('plaintext_ref'))
+        return result
+
+    if event_type == 'delivery_receipt':
+        result['envelope_id'] = payload.get('envelope_id')
+        for key in (
+            'charged_tokens',
+            'delivered_at',
+            'ciphertext_bytes',
+            'billable_kb',
+            'balance_after',
+        ):
+            if payload.get(key) is not None:
+                result[key] = payload.get(key)
+        return result
+
+    result.update(payload)
+    return result
 
 
 def event_to_dict(event: AgentEvent) -> dict[str, Any] | None:
@@ -145,6 +198,13 @@ def build_status_payload(
         'receipts': {
             'count': receipt_count,
             'last_cursor': cursor,
+        },
+        'inbox': {
+            'count': store.count_inbox_messages(),
+            'last_seen_at': state.last_message_seen_at,
+        },
+        'events': {
+            'durable': True,
         },
         'endpoints': {
             'core_url': identity.core_url or os.environ.get('PLENIPO_CORE_URL', ''),
