@@ -75,13 +75,30 @@ async def test_list_receipts_requests_receipt_list(
         return {
             'type': 'receipt.list.result',
             'receipts': [{'envelope_id': '01J', 'charged_tokens': 1}],
+            'next_cursor': 'cursor-next',
         }
 
     monkeypatch.setattr(client, '_request_reply', fake_request)
-    receipts = await client.list_receipts(since='2026-06-08T20:56:00Z', limit=5)
-    assert receipts == [{'envelope_id': '01J', 'charged_tokens': 1}]
+    result = await client.list_receipts(since='2026-06-08T20:56:00Z', limit=5)
+    assert result['receipts'] == [{'envelope_id': '01J', 'charged_tokens': 1}]
+    assert result['next_cursor'] == 'cursor-next'
     assert captured['event'] == 'receipt.list'
     assert captured['payload'] == {'since': '2026-06-08T20:56:00Z', 'limit': 5}
+
+
+async def test_list_receipts_prefers_cursor_over_since(
+    monkeypatch: pytest.MonkeyPatch,
+    client: PlenipoClient,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_request(ref: str, event: str, payload: dict[str, Any]) -> dict[str, Any]:
+        captured.update({'payload': payload})
+        return {'type': 'receipt.list.result', 'receipts': [], 'next_cursor': None}
+
+    monkeypatch.setattr(client, '_request_reply', fake_request)
+    await client.list_receipts(since='2026-06-08T20:56:00Z', cursor='cursor-1', limit=5)
+    assert captured['payload'] == {'cursor': 'cursor-1', 'limit': 5}
 
 
 async def test_connect_authenticates_and_joins(monkeypatch: pytest.MonkeyPatch, client: PlenipoClient) -> None:
@@ -128,6 +145,30 @@ async def test_send_builds_signed_envelope_and_payment(
     assert envelope['recipient_did'] == 'did:web:recipient.local'
     assert envelope['signature']
     assert captured['payload']['payment']['x402']
+
+
+async def test_send_accepts_caller_envelope_id(
+    monkeypatch: pytest.MonkeyPatch,
+    client: PlenipoClient,
+) -> None:
+    recipient_private = PrivateKey.generate()
+    captured: dict[str, Any] = {}
+
+    async def fake_request(ref: str, event: str, payload: dict[str, Any]) -> dict[str, Any]:
+        captured.update({'payload': payload})
+        return {'type': 'ack', 'v': '1.0', 'envelope_id': '01CUSTOM', 'status': 'queued'}
+
+    monkeypatch.setattr(client, '_request_reply', fake_request)
+
+    ack = await client.send(
+        'did:web:recipient.local',
+        'hello',
+        bytes(recipient_private.public_key),
+        envelope_id='01CUSTOM',
+    )
+
+    assert ack['envelope_id'] == '01CUSTOM'
+    assert captured['payload']['envelope']['envelope_id'] == '01CUSTOM'
 
 
 async def test_channel_helpers_send_expected_events(

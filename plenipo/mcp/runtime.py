@@ -176,11 +176,16 @@ class McpRuntime:
         self,
         *,
         since: str | None = None,
+        cursor: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Fetches persisted delivery receipts for this sender."""
         client = await self.ensure_connected()
-        return await client.list_receipts(since=since, limit=limit)
+        result = await client.list_receipts(since=since, cursor=cursor, limit=limit)
+        receipts = result.get('receipts', [])
+        if not isinstance(receipts, list):
+            return []
+        return receipts
 
     def drain_messages(self, since: str | None = None, limit: int = 100) -> list[BufferedMessage]:
         """Returns and removes buffered messages matching optional since cursor."""

@@ -108,23 +108,21 @@ Use `plenipo_delivery_status` with the returned `envelope_id` to track lifecycle
 
 Delivery receipts include `ciphertext_bytes`, `billable_kb`, `charged_tokens`, and `balance_after` when available. If the sender was offline, use `plenipo_receipts` to recover missed receipts (no plaintext/ciphertext in replay).
 
-## Autonomous Agent Runtime v0 (non-MCP)
+## Autonomous Agent Runtime v0.1 (non-MCP)
 
 When the host should run a **long-lived connected agent** instead of polling MCP tools:
 
 ```bash
 plenipo-agent run --print-events
-python -m plenipo.agent run --capability mcp --protocol plenipo.message.v1 --print-events
+plenipo-agent status
+plenipo-agent outbox
+plenipo-agent receipts
 ```
 
-- Prints connect/disconnect/error events with `--print-events`
-- Prints receipt billing metadata on live and recovered receipts
-- Prints envelope IDs for messages; use `--print-plaintext` only when explicitly needed
-- Never prints private keys or full identity JSON
-
-Programmatic API: `from plenipo.runtime import PlenipoAgentRuntime`.
-
-**Not in v0:** wallet x402 auto-topup, marketplace, task protocol, production wallet funding, TypeScript runtime parity.
+- Durable local outbox/receipts in `~/.plenipo/runtime.sqlite`
+- Idempotent sends (no double-charge on restart for accepted envelopes)
+- Cursor-based receipt replay recovery after crash/reconnect
+- `status` hides secrets; use `--print-plaintext` only when explicitly needed
 
 ## Recommended workflows
 

@@ -40,6 +40,15 @@ class SendAck(TypedDict, total=False):
     balance_after: int
 
 
+class ReceiptListResponse(TypedDict, total=False):
+    """Response from receipt.list."""
+
+    type: str
+    v: str
+    receipts: list[dict[str, Any]]
+    next_cursor: str | None
+
+
 class PlenipoClient:
     """Programmatic client for the Plenipo relay."""
 
@@ -142,10 +151,12 @@ class PlenipoClient:
         recipient_did: str,
         plaintext: str,
         recipient_public_key: bytes,
+        *,
+        envelope_id: str | None = None,
     ) -> SendAck:
         """Sends a sealed encrypted envelope and returns the relay ack."""
         sealed = SealedBox(PublicKey(recipient_public_key)).encrypt(plaintext.encode('utf-8'))
-        envelope_id = _generate_ulid()
+        envelope_id = envelope_id or _generate_ulid()
         created_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         envelope = {
             'type': 'envelope',
@@ -203,22 +214,22 @@ class PlenipoClient:
         self,
         *,
         since: str | None = None,
+        cursor: str | None = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> ReceiptListResponse:
         """Lists persisted delivery receipts for the authenticated sender."""
         request: dict[str, Any] = {'limit': limit}
-        if since:
+        if cursor:
+            request['cursor'] = cursor
+        elif since:
             request['since'] = since
         ref = str(self._ref)
         self._ref += 1
         payload = cast(
-            dict[str, Any],
+            ReceiptListResponse,
             await self._request_reply(ref, 'receipt.list', request),
         )
-        receipts = payload.get('receipts', [])
-        if not isinstance(receipts, list):
-            return []
-        return [cast(dict[str, Any], row) for row in receipts]
+        return payload
 
     async def _request_reply(self, ref: str, event: str, payload: dict[str, Any]) -> Any:
         loop = asyncio.get_running_loop()

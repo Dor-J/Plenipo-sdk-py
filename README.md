@@ -6,12 +6,12 @@
 
 ## Status
 
-Active development. Core relay, Registry discovery, Route Records v1, MCP tools, and **Agent Runtime v0** are implemented for local autonomous messaging. Wallet x402 per-message payment, marketplace, task protocol, and production wallet funding are **not** implemented in this slice.
+Active development. Core relay, Registry discovery, Route Records v1, MCP tools, and **Agent Runtime v0.1** are implemented for local autonomous messaging. Wallet x402 per-message payment, marketplace, task protocol, and production wallet funding are **not** implemented in this slice.
 
 ## Features
 
 - **MCP server** — poll-based tools for send, receive, discover, balance, identity, route declaration, and receipt replay
-- **Agent Runtime v0** — `PlenipoAgentRuntime` with auto-reconnect, decrypt-on-receive, and missed receipt recovery via `receipt.list`
+- **Agent Runtime v0.1** — durable SQLite outbox/receipts, idempotent sends, cursor-based receipt replay
 - **CLI** — `plenipo-agent run` for long-lived autonomous agents with sanitized event output
 - **Programmatic client** — `PlenipoClient` WebSocket relay with `list_receipts()`
 - **DID helpers** — W3C DID document generation, Core sync, Route Record declaration
@@ -33,7 +33,7 @@ Active development. Core relay, Registry discovery, Route Records v1, MCP tools,
 | `plenipo_declare_capabilities` | Declare or update agent capabilities |
 | `plenipo_declare_route` | Declare or update Route Record metadata (protocols, payment, limits) |
 
-## Agent Runtime v0
+## Agent Runtime v0.1
 
 For autonomous agents that stay connected (not poll-based MCP), use the runtime:
 
@@ -41,6 +41,8 @@ For autonomous agents that stay connected (not poll-based MCP), use the runtime:
 from plenipo.runtime import PlenipoAgentRuntime
 
 async with PlenipoAgentRuntime() as agent:
+    ack = await agent.send(recipient_did, 'hello')
+    rows = agent.outbox()
     async for event in agent.events():
         print(event.type, event)
 ```
@@ -50,17 +52,18 @@ Or via CLI:
 ```bash
 python -m plenipo.agent run --print-events
 plenipo-agent run --capability mcp --protocol plenipo.message.v1 --print-events
+plenipo-agent status
+plenipo-agent outbox
+plenipo-agent receipts
 ```
 
 Runtime behavior:
 
 - Loads/creates identity from `~/.plenipo/identity.json`
-- Syncs with Core and declares a default Route Record when missing
+- Persists outbox/receipts in `~/.plenipo/runtime.sqlite` (no private keys; no plaintext by default)
+- Idempotent sends: accepted/delivered envelopes are not double-sent on restart
 - Auto-reconnects with bounded exponential backoff
-- Decrypts inbound messages (never persists plaintext by default)
-- Recovers missed delivery receipts after reconnect using `receipt.list` and `runtime-state.json`
-
-Use `--print-plaintext` only when you explicitly need decrypted message bodies in logs.
+- Recovers missed receipts via cursor-based `receipt.list` pagination
 
 ## Layout
 
@@ -137,6 +140,7 @@ Requires **Python 3.11+**.
 python scripts/test-two-agent-messaging.py
 python scripts/test-two-agent-messaging.py --use-runtime
 python scripts/test-agent-runtime-reconnect.py
+python scripts/test-agent-runtime-crash-recovery.py
 ```
 
 ## TypeScript parity

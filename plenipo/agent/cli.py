@@ -1,4 +1,4 @@
-"""Command-line interface for Agent Runtime v0."""
+"""Command-line interface for Agent Runtime v0.1."""
 
 from __future__ import annotations
 
@@ -6,8 +6,12 @@ import argparse
 import asyncio
 import sys
 
+from plenipo.identity.provision import ensure_identity
+from plenipo.identity.sync import sync_identity_with_core
 from plenipo.runtime import PlenipoAgentRuntime
 from plenipo.runtime.events import DeliveryReceiptEvent, MessageEvent
+from plenipo.runtime.state import load_runtime_state
+from plenipo.runtime.store import RuntimeStore
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -27,6 +31,10 @@ def _build_parser() -> argparse.ArgumentParser:
         action='store_true',
         help='Print decrypted message plaintext (opt-in)',
     )
+
+    subparsers.add_parser('status', help='Show runtime status without secrets')
+    subparsers.add_parser('outbox', help='List sanitized outbox rows')
+    subparsers.add_parser('receipts', help='List sanitized receipt rows')
     return parser
 
 
@@ -66,13 +74,16 @@ def _print_event(event: object, *, print_events: bool, print_plaintext: bool) ->
         )
 
 
-async def _run_agent(args: argparse.Namespace) -> int:
-    if sys.platform == 'win32':
-        import os
+def _document_has_route(document: dict[str, object]) -> bool:
+    for service in document.get('service') or []:
+        if isinstance(service, dict) and service.get('type') == 'PlenipoAgent':
+            if service.get('protocols'):
+                return True
+    return False
 
-        os.environ.setdefault('PLENIPO_CORE_URL', 'http://127.0.0.1:4000')
-        os.environ.setdefault('PLENIPO_REGISTRY_URL', 'http://127.0.0.1:4001')
-        os.environ.setdefault('PLENIPO_RELAY_URL', 'ws://127.0.0.1:4000/agent/websocket')
+
+async def _run_agent(args: argparse.Namespace) -> int:
+    _apply_local_defaults()
 
     async with PlenipoAgentRuntime() as agent:
         print('[ready] agent runtime connected')
@@ -82,6 +93,78 @@ async def _run_agent(args: argparse.Namespace) -> int:
                 print_events=args.print_events,
                 print_plaintext=args.print_plaintext,
             )
+
+
+async def _show_status() -> int:
+    _apply_local_defaults()
+    store = RuntimeStore()
+    try:
+        identity = await ensure_identity()
+        synced, _ = await sync_identity_with_core(identity)
+        state = load_runtime_state(store)
+        counts = store.count_outbox_by_status()
+
+        connected = False
+        runtime = PlenipoAgentRuntime()
+        try:
+            await runtime.ensure_ready()
+            connected = runtime._client is not None and runtime._client.connected
+            await runtime.close()
+        except Exception:
+            connected = False
+            try:
+                await runtime.close()
+            except Exception:
+                pass
+
+        print(f'did: {synced.did}')
+        print(f'core_registered: {synced.core_registered}')
+        print(f'route_declared: {_document_has_route(synced.document)}')
+        print(f'connected: {str(connected).lower()}')
+        print(f'outbox_pending: {counts.get("pending", 0)}')
+        print(f'outbox_accepted: {counts.get("accepted", 0)}')
+        print(f'outbox_delivered: {counts.get("delivered", 0)}')
+        print(f'outbox_failed: {counts.get("failed", 0)}')
+        cursor = state.last_receipt_cursor or state.last_receipt_seen_at or ''
+        print(f'last_receipt_cursor: {cursor}')
+        return 0
+    finally:
+        store.close()
+
+
+def _show_outbox() -> int:
+    store = RuntimeStore()
+    try:
+        for row in store.list_outbox(limit=100):
+            print(
+                f'{row.envelope_id} status={row.status} recipient={row.recipient_did} '
+                f'tokens={row.charged_tokens} delivered_at={row.delivered_at}'
+            )
+        return 0
+    finally:
+        store.close()
+
+
+def _show_receipts() -> int:
+    store = RuntimeStore()
+    try:
+        for row in store.list_receipts(limit=100):
+            print(
+                f'{row.envelope_id} tokens={row.charged_tokens} '
+                f'bytes={row.ciphertext_bytes} delivered_at={row.delivered_at}'
+            )
+        return 0
+    finally:
+        store.close()
+
+
+def _apply_local_defaults() -> None:
+    if sys.platform == 'win32':
+        import os
+
+        os.environ.setdefault('PLENIPO_CORE_URL', 'http://127.0.0.1:4000')
+        os.environ.setdefault('PLENIPO_REGISTRY_URL', 'http://127.0.0.1:4001')
+        os.environ.setdefault('PLENIPO_RELAY_URL', 'ws://127.0.0.1:4000/agent/websocket')
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -95,6 +178,15 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             return 0
         return 0
+
+    if args.command == 'status':
+        return asyncio.run(_show_status())
+
+    if args.command == 'outbox':
+        return _show_outbox()
+
+    if args.command == 'receipts':
+        return _show_receipts()
 
     parser.error(f'unknown command: {args.command}')
     return 2

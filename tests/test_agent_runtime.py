@@ -35,9 +35,16 @@ class FakeClient:
     async def disconnect(self) -> None:
         self.connected = False
 
-    async def send(self, recipient_did: str, message: str, enc_key: bytes) -> dict[str, object]:
+    async def send(
+        self,
+        recipient_did: str,
+        message: str,
+        enc_key: bytes,
+        *,
+        envelope_id: str | None = None,
+    ) -> dict[str, object]:
         return {
-            'envelope_id': '01SEND',
+            'envelope_id': envelope_id or '01SEND',
             'ciphertext_bytes': 105,
             'billable_kb': 1,
             'charged_tokens': 1,
@@ -48,20 +55,25 @@ class FakeClient:
         self,
         *,
         since: str | None = None,
+        cursor: str | None = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        self.list_calls.append({'since': since, 'limit': limit})
-        return [
-            {
-                'type': 'delivery_receipt',
-                'envelope_id': '01RCPT',
-                'ciphertext_bytes': 105,
-                'billable_kb': 1,
-                'charged_tokens': 1,
-                'balance_after': 999,
-                'delivered_at': '2026-06-08T20:56:01Z',
-            }
-        ]
+    ) -> dict[str, object]:
+        self.list_calls.append({'since': since, 'cursor': cursor, 'limit': limit})
+        return {
+            'type': 'receipt.list.result',
+            'receipts': [
+                {
+                    'type': 'delivery_receipt',
+                    'envelope_id': '01RCPT',
+                    'ciphertext_bytes': 105,
+                    'billable_kb': 1,
+                    'charged_tokens': 1,
+                    'balance_after': 999,
+                    'delivered_at': '2026-06-08T20:56:01Z',
+                }
+            ],
+            'next_cursor': None,
+        }
 
 
 def _identity() -> object:
@@ -132,7 +144,7 @@ async def test_runtime_recovers_missed_receipts(
     runtime = PlenipoAgentRuntime()
     await runtime.ensure_ready()
 
-    assert created[0].list_calls == [{'since': '2026-06-08T20:56:00Z', 'limit': 100}]
+    assert created[0].list_calls == [{'since': '2026-06-08T20:56:00Z', 'cursor': None, 'limit': 100}]
 
     startup_events: list[object] = []
     for _ in range(2):
@@ -179,13 +191,14 @@ async def test_runtime_emits_message_events(
     assert event.envelope_id == '01MSG'
 
 
-async def test_runtime_send_returns_billing_metadata(
+async def test_runtime_send_persists_outbox(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: object,
 ) -> None:
     monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
     identity = _identity()
     await _patch_runtime(monkeypatch, identity)
+
     async def fake_resolve(*_args: object, **_kwargs: object) -> bytes:
         return b'k' * 32
 
@@ -193,8 +206,12 @@ async def test_runtime_send_returns_billing_metadata(
 
     runtime = PlenipoAgentRuntime()
     await runtime.ensure_ready()
-    ack = await runtime.send('did:web:localhost:agents:recipient', 'hello')
+    while not runtime._events.empty():
+        runtime._events.get_nowait()
 
-    assert ack['ciphertext_bytes'] == 105
-    assert ack['charged_tokens'] == 1
-    assert ack['balance_after'] == 999
+    ack = await runtime.send('did:web:localhost:agents:recipient', 'hello')
+    row = runtime.store.get_outbox(str(ack['envelope_id']))
+    assert row is not None
+    assert row.status == 'accepted'
+    assert row.charged_tokens == 1
+    runtime.store.close()
