@@ -9,6 +9,21 @@ description = "Plenipo MCP skill and Python client for agent-to-agent communicat
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+authors = [{ name = "Plenipo Contributors" }]
+maintainers = [{ name = "Plenipo Maintainers" }]
+keywords = ["plenipo", "agent", "did", "mcp", "sidecar", "encrypted-messaging"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Communications",
+  "Topic :: Security :: Cryptography",
+  "Typing :: Typed",
+]
 dependencies = [
   "mcp>=1.6.0",
   "httpx>=0.28.0",
@@ -32,6 +47,12 @@ dev = [
 [project.scripts]
 plenipo-mcp = "plenipo.mcp.__main__:main"
 plenipo-agent = "plenipo.agent.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/plenipo/plenipo"
+Repository = "https://github.com/plenipo/plenipo"
+Documentation = "https://github.com/plenipo/plenipo/tree/main/Plenipo-sdk-py"
+Issues = "https://github.com/plenipo/plenipo/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["plenipo"]

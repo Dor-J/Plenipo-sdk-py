@@ -18,7 +18,7 @@ def default_route_service_fields() -> dict[str, Any]:
         'payment': {
             'model': 'per_kb',
             'price_per_kb_tokens': 1,
-            'accepted_schemes': ['plenipo-dev-token'],
+            'accepted_schemes': ['plenipo-prepaid-token'],
         },
         'limits': {
             'max_message_kb': 256,

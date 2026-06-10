@@ -1,22 +1,32 @@
-FROM python:3.11-slim
+FROM python:3.11.13-slim-bookworm
+
+LABEL org.opencontainers.image.title="Plenipo Python Agent Sidecar" \
+      org.opencontainers.image.description="Local Plenipo agent sidecar packaged from the Python SDK" \
+      org.opencontainers.image.source="https://github.com/plenipo/plenipo" \
+      org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-RUN useradd --create-home --uid 10001 plenipo
+RUN useradd --create-home --uid 10001 plenipo \
+  && mkdir -p /data \
+  && chown -R plenipo:plenipo /data /app
 
-COPY pyproject.toml README.md /app/
-COPY plenipo /app/plenipo/
+COPY --chown=plenipo:plenipo pyproject.toml README.md /app/
+COPY --chown=plenipo:plenipo plenipo /app/plenipo/
 
 RUN pip install --no-cache-dir .
 
-ENV PLENIPO_HOME=/data
-ENV PLENIPO_CORE_URL=http://host.docker.internal:4000
-ENV PLENIPO_REGISTRY_URL=http://host.docker.internal:4001
-ENV PLENIPO_RELAY_URL=ws://host.docker.internal:4000/agent/websocket
+ENV PLENIPO_HOME=/data \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PLENIPO_SIDECAR_LOG_LEVEL=info
 
 EXPOSE 8787
 
 USER plenipo
 VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=3).read()" || exit 1
 
 CMD ["plenipo-agent", "sidecar", "--host", "0.0.0.0", "--port", "8787", "--allow-remote-bind"]
