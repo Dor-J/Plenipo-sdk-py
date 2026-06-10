@@ -16,13 +16,11 @@ from starlette.testclient import TestClient
 from plenipo.agent.cli import main
 from plenipo.discover.records import RouteRecord
 from plenipo.identity.store import AgentIdentity
-from plenipo.runtime.events import DeliveryReceiptEvent, MessageEvent
 from plenipo.runtime.store import OutboxRecord, ReceiptRecord, RuntimeStore
 from plenipo.sidecar.api import SidecarApp
 from plenipo.sidecar.auth import (
     read_sidecar_token_file,
     resolve_sidecar_token,
-    sidecar_token_path,
     write_sidecar_token_file,
 )
 from plenipo.sidecar.client import PlenipoSidecarClient
@@ -42,7 +40,6 @@ from plenipo.sidecar.models import (
     SERVICE_NAME,
     SIDECAR_VERSION,
     contains_secret_keys,
-    event_to_dict,
 )
 
 TEST_TOKEN = 'test-bearer-token-secret'

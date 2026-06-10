@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 
 from plenipo.runtime.state import load_runtime_state, save_runtime_state, RuntimeState
 from plenipo.runtime.store import RuntimeStore

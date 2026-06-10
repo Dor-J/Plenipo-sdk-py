@@ -9,6 +9,7 @@ from plenipo.identity.register_signing import document_fingerprint
 from plenipo.identity.store import AgentIdentity, save_identity
 from plenipo.identity.sync import sync_identity_with_core
 
+from plenipo.discover.records import RouteRecord, normalize_route_record
 from plenipo.route_defaults import ENCRYPTION_ALG, default_route_service_fields
 
 SUPPORTED_PROTOCOLS = frozenset({'plenipo.message.v1'})
@@ -17,9 +18,6 @@ SUPPORTED_SCHEMES = frozenset({'plenipo-prepaid-token'})
 MAX_PROTOCOLS = 16
 MAX_SCHEMES = 8
 MAX_PRICE_PER_KB = 1000
-
-
-from plenipo.discover.records import RouteRecord, normalize_route_record
 
 __all__ = [
     'RouteRecord',

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
@@ -89,7 +88,7 @@ def test_message_event_metadata_only(tmp_path, monkeypatch) -> None:
         plaintext_alg='nacl-secretbox-v1',
         metadata={},
     )
-    row = store.list_sidecar_events(after_id=0, limit=1)
+    store.list_sidecar_events(after_id=0, limit=1)
     event_id = store.insert_sidecar_event(
         event_type='message',
         envelope_id='01MSG',

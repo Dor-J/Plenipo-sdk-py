@@ -5,12 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from nacl.signing import SigningKey
 
 from plenipo.identity.register_signing import (
     build_register_payload,
     sign_register_payload,
-    signing_bytes,
 )
 
 

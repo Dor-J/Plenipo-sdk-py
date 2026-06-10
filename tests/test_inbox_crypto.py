@@ -10,7 +10,6 @@ from plenipo.runtime.inbox_crypto import (
     decrypt_plaintext,
     encrypt_plaintext,
     resolve_sidecar_store_key,
-    write_sidecar_store_key,
 )
 
 
