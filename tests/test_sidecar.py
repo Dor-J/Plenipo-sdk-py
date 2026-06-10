@@ -30,10 +30,14 @@ from plenipo.sidecar.config import (
     NO_AUTH_WARNING,
     SidecarConfig,
     SidecarSecurity,
+    load_sidecar_config_file,
+    resolve_sidecar_config,
     validate_bind_host,
     validate_no_auth_bind,
+    validate_tls_config,
 )
 from plenipo.sidecar.events import EventBuffer
+from plenipo.sidecar.middleware import build_signed_request_headers
 from plenipo.sidecar.models import (
     SERVICE_NAME,
     SIDECAR_VERSION,
@@ -99,7 +103,7 @@ def _fake_identity(tmp_path) -> AgentIdentity:  # type: ignore[no-untyped-def]
                 'payment': {
                     'model': 'per_kb',
                     'price_per_kb_tokens': 1,
-                    'accepted_schemes': ['plenipo-dev-token'],
+                    'accepted_schemes': ['plenipo-prepaid-token'],
                 },
                 'limits': {'max_message_kb': 256, 'offline_queue_ttl_seconds': 86400},
                 'encryption': {'alg': 'nacl-sealedbox-v1', 'publicKeyRef': '#enc-key'},
@@ -130,11 +134,13 @@ def _make_security(
     auth_enabled: bool = True,
     token: str | None = TEST_TOKEN,
     allowed_origins: frozenset[str] = frozenset(),
+    signed_request_secret: str | None = None,
 ) -> SidecarSecurity:
     return SidecarSecurity(
         auth_enabled=auth_enabled,
         token=token,
         allowed_origins=allowed_origins,
+        signed_request_secret=signed_request_secret,
     )
 
 
@@ -171,6 +177,34 @@ def test_status_fails_without_token(sidecar_client: TestClient) -> None:
     assert response.status_code == 401
 
 
+def test_metrics_requires_token(sidecar_client: TestClient) -> None:
+    response = sidecar_client.get('/metrics')
+    assert response.status_code == 401
+
+
+def test_metrics_returns_sanitized_prometheus_text(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
+    client, runtime, _buffer, _security = sidecar_setup
+    runtime._store.insert_outbox_pending(
+        envelope_id='01METRIC',
+        recipient_did='did:web:localhost:agents:peer',
+    )
+    runtime._store.insert_sidecar_event(
+        event_type='message',
+        envelope_id='01METRIC',
+        payload={'plaintext': 'super-secret-local-message'},
+    )
+
+    response = client.get('/metrics', headers=_auth_headers())
+
+    assert response.status_code == 200
+    text = response.text
+    assert 'plenipo_sidecar_build_info' in text
+    assert 'plenipo_sidecar_outbox_rows{status="pending"} 1' in text
+    assert 'plenipo_sidecar_events{event_type="message"} 1' in text
+    assert 'super-secret-local-message' not in text
+    assert TEST_TOKEN not in text
+
+
 def test_status_works_with_valid_token(sidecar_client: TestClient) -> None:
     response = sidecar_client.get('/status', headers=_auth_headers())
     assert response.status_code == 200
@@ -190,6 +224,48 @@ def test_send_requires_token(sidecar_client: TestClient) -> None:
         json={'recipient_did': 'did:web:localhost:agents:peer', 'message': 'hello'},
     )
     assert response.status_code == 401
+
+
+def test_signed_request_mode_rejects_unsigned_send(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    runtime = FakeRuntime(_identity=_fake_identity(tmp_path))
+    runtime._client = type('Conn', (), {'connected': True})()
+    security = _make_security(signed_request_secret='signing-secret')
+    store = RuntimeStore(tmp_path / 'runtime.sqlite')
+    app = SidecarApp(runtime, EventBuffer(store=store), security).create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        '/send',
+        json={'recipient_did': 'did:web:localhost:agents:peer', 'message': 'hello'},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 401
+
+
+def test_signed_request_mode_accepts_signed_send(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv('PLENIPO_HOME', str(tmp_path))
+    runtime = FakeRuntime(_identity=_fake_identity(tmp_path))
+    runtime._client = type('Conn', (), {'connected': True})()
+    security = _make_security(signed_request_secret='signing-secret')
+    store = RuntimeStore(tmp_path / 'runtime.sqlite')
+    app = SidecarApp(runtime, EventBuffer(store=store), security).create_app()
+    client = TestClient(app)
+    body = b'{"recipient_did":"did:web:localhost:agents:peer","message":"hello"}'
+
+    response = client.post(
+        '/send',
+        content=body,
+        headers={
+            **_auth_headers(),
+            'Content-Type': 'application/json',
+            **build_signed_request_headers('signing-secret', 'POST', '/send', body),
+        },
+    )
+
+    assert response.status_code == 200
+    assert runtime.send_calls[0]['message'] == 'hello'
 
 
 def test_send_calls_runtime_and_returns_billing(sidecar_setup) -> None:  # type: ignore[no-untyped-def]
@@ -503,6 +579,51 @@ def test_sidecar_config_defaults() -> None:
     config = SidecarConfig()
     assert config.host == '127.0.0.1'
     assert config.no_auth is False
+
+
+def test_sidecar_config_file_env_and_cli_precedence(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    config_path = tmp_path / 'sidecar.toml'
+    config_path.write_text(
+        """
+        [sidecar]
+        host = "127.0.0.2"
+        port = 9000
+        capability = "file-cap"
+        allow_remote_bind = false
+        allowed_origins = ["http://file.example"]
+        tls_cert = "/certs/file.crt"
+        tls_key = "/certs/file.key"
+        """,
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('PLENIPO_SIDECAR_PORT', '9100')
+    monkeypatch.setenv('PLENIPO_SIDECAR_ALLOWED_ORIGINS', 'http://env.example')
+
+    config = resolve_sidecar_config(
+        config_path=config_path,
+        cli_values={
+            'host': '127.0.0.3',
+            'capability': 'cli-cap',
+            'allowed_origins': ('http://cli.example',),
+        },
+    )
+
+    assert config.host == '127.0.0.3'
+    assert config.port == 9100
+    assert config.capability == 'cli-cap'
+    assert config.allowed_origins == ('http://cli.example',)
+    assert config.tls_cert == '/certs/file.crt'
+
+
+def test_sidecar_config_loader_accepts_top_level_toml(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    config_path = tmp_path / 'sidecar.toml'
+    config_path.write_text('host = "127.0.0.4"\n', encoding='utf-8')
+    assert load_sidecar_config_file(config_path)['host'] == '127.0.0.4'
+
+
+def test_sidecar_tls_requires_cert_and_key() -> None:
+    with pytest.raises(ValueError, match='tls-cert'):
+        validate_tls_config(SidecarConfig(tls_cert='/certs/local.crt'))
 
 
 def test_no_auth_warning_message() -> None:

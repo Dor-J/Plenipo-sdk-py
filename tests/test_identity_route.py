@@ -56,13 +56,13 @@ def test_normalize_route_record_from_registry() -> None:
             'payment': {
                 'model': 'per_kb',
                 'price_per_kb_tokens': 1,
-                'accepted_schemes': ['plenipo-dev-token'],
+                'accepted_schemes': ['plenipo-prepaid-token'],
             },
             'limits': {'max_message_kb': 256, 'offline_queue_ttl_seconds': 86400},
         }
     )
     assert record['did'].startswith('did:web:')
-    assert record['payment']['accepted_schemes'] == ['plenipo-dev-token']
+    assert record['payment']['accepted_schemes'] == ['plenipo-prepaid-token']
 
 
 async def test_declare_route_updates_document(

@@ -71,3 +71,14 @@ def test_runtime_store_no_plaintext_by_default(tmp_path: object) -> None:
     assert schema is not None
     assert 'plaintext' not in str(schema['sql']).lower()
     db.close()
+
+
+def test_runtime_store_sets_schema_version(tmp_path: object) -> None:
+    db_path = tmp_path / 'runtime.sqlite'  # type: ignore[operator]
+    db = RuntimeStore(db_path)
+    assert db.schema_version() == 1
+    db.close()
+
+    reopened = RuntimeStore(db_path)
+    assert reopened.schema_version() == 1
+    reopened.close()

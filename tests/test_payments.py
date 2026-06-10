@@ -2,11 +2,14 @@
 
 from plenipo.payments import (
     build_bundle_payment,
+    build_production_bundle_payment,
     build_relay_payment,
+    detect_wallet_capabilities,
     encode_payment_payload,
     mandate_prepare,
     parse_payment_required,
     purchase_bundle,
+    should_auto_topup,
 )
 import base64
 import json
@@ -37,6 +40,7 @@ def test_parse_payment_required() -> None:
 def test_build_relay_payment() -> None:
     proof = build_relay_payment('did:web:a.local', 1, '01JENV')
     decoded = json.loads(base64.urlsafe_b64decode(proof + '=='))
+    assert decoded['scheme'] == 'plenipo-prepaid-token'
     assert decoded['purpose'] == 'relay'
     assert decoded['envelope_id'] == '01JENV'
 
@@ -44,7 +48,36 @@ def test_build_relay_payment() -> None:
 def test_build_bundle_payment() -> None:
     proof = build_bundle_payment('did:web:a.local', 'starter', 100)
     decoded = json.loads(base64.urlsafe_b64decode(proof + '=='))
+    assert decoded['scheme'] == 'x402-dev'
     assert decoded['bundle_id'] == 'starter'
+
+
+def test_build_production_bundle_payment() -> None:
+    proof = build_production_bundle_payment(
+        agent_did='did:web:a.example',
+        bundle_id='starter',
+        amount_cents=100,
+        network='base-sepolia',
+        pay_to='0xabc',
+        payer='0xdef',
+        signature='0xsig',
+        payment_id='pay_prod_1',
+    )
+    decoded = json.loads(base64.urlsafe_b64decode(proof + '=='))
+    assert decoded['scheme'] == 'x402'
+    assert decoded['network'] == 'base-sepolia'
+    assert decoded['pay_to'] == '0xabc'
+    assert decoded['payer'] == '0xdef'
+    assert decoded['signature'] == '0xsig'
+
+
+def test_wallet_detection_and_auto_topup_policy() -> None:
+    assert detect_wallet_capabilities({})['available'] is False
+    caps = detect_wallet_capabilities({'PLENIPO_X402_PRIVATE_KEY': 'secret', 'CROSSMINT_API_KEY': 'key'})
+    assert caps['available'] is True
+    assert caps['providers'] == ['raw-x402', 'crossmint']
+    assert should_auto_topup(10, enabled=False, threshold_tokens=100, max_amount_cents=500) is False
+    assert should_auto_topup(10, enabled=True, threshold_tokens=100, max_amount_cents=500) is True
 
 
 class Response:

@@ -14,7 +14,7 @@ def test_create_did_document_structure() -> None:
     assert service['payment'] == {
         'model': 'per_kb',
         'price_per_kb_tokens': 1,
-        'accepted_schemes': ['plenipo-dev-token'],
+        'accepted_schemes': ['plenipo-prepaid-token'],
     }
     assert service['limits'] == {
         'max_message_kb': 256,
