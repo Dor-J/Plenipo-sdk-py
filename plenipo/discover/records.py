@@ -46,7 +46,7 @@ def normalize_route_record(raw: dict[str, Any]) -> RouteRecord:
             'model': str(payment.get('model', 'per_kb')),
             'price_per_kb_tokens': int(payment.get('price_per_kb_tokens', 1)),
             'accepted_schemes': list(
-                payment.get('accepted_schemes') or ['plenipo-dev-token']
+                payment.get('accepted_schemes') or ['plenipo-prepaid-token']
             ),
         },
         'limits': {

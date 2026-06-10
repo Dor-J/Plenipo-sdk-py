@@ -58,3 +58,16 @@ def sign_register_payload(payload: dict[str, str], auth_secret_b64: str) -> str:
     signing = SigningKey(base64url.decode(auth_secret_b64))
     signature = signing.sign(signing_bytes(payload)).signature
     return base64url.encode(signature)
+
+
+def sign_rotation_payload(
+    payload: dict[str, str],
+    *,
+    previous_auth_secret_b64: str,
+    new_auth_secret_b64: str,
+) -> dict[str, str]:
+    """Signs a rotation payload with both previous and new auth keys."""
+    return {
+        'previous_signature': sign_register_payload(payload, previous_auth_secret_b64),
+        'signature': sign_register_payload(payload, new_auth_secret_b64),
+    }

@@ -13,7 +13,7 @@ from plenipo.route_defaults import ENCRYPTION_ALG, default_route_service_fields
 
 SUPPORTED_PROTOCOLS = frozenset({'plenipo.message.v1'})
 SUPPORTED_PAYMENT_MODELS = frozenset({'per_kb'})
-SUPPORTED_SCHEMES = frozenset({'plenipo-dev-token'})
+SUPPORTED_SCHEMES = frozenset({'plenipo-prepaid-token'})
 MAX_PROTOCOLS = 16
 MAX_SCHEMES = 8
 MAX_PRICE_PER_KB = 1000

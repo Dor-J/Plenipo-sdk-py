@@ -37,17 +37,19 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser('receipts', help='List sanitized receipt rows')
 
     sidecar_parser = subparsers.add_parser('sidecar', help='Run local HTTP sidecar API')
-    sidecar_parser.add_argument('--host', default='127.0.0.1', help='Bind host (default 127.0.0.1)')
-    sidecar_parser.add_argument('--port', type=int, default=8787, help='Bind port (default 8787)')
-    sidecar_parser.add_argument('--capability', default='mcp', help='Declared capability label')
+    sidecar_parser.add_argument('--config', default=None, help='Sidecar TOML config path')
+    sidecar_parser.add_argument('--host', default=None, help='Bind host (default 127.0.0.1)')
+    sidecar_parser.add_argument('--port', type=int, default=None, help='Bind port (default 8787)')
+    sidecar_parser.add_argument('--capability', default=None, help='Declared capability label')
     sidecar_parser.add_argument(
         '--protocol',
-        default='plenipo.message.v1',
+        default=None,
         help='Declared protocol',
     )
     sidecar_parser.add_argument(
         '--allow-remote-bind',
         action='store_true',
+        default=None,
         help='Allow binding to non-localhost interfaces',
     )
     sidecar_parser.add_argument(
@@ -56,21 +58,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help='Bearer token override (default: env, token file, or generated)',
     )
     sidecar_parser.add_argument(
+        '--signed-request-secret',
+        default=None,
+        help='Require HMAC-signed sidecar requests using this secret',
+    )
+    sidecar_parser.add_argument(
         '--no-auth',
         action='store_true',
+        default=None,
         help='Disable bearer auth (localhost development only)',
     )
     sidecar_parser.add_argument(
         '--print-token',
         action='store_true',
+        default=None,
         help='Print bearer token to stderr on startup',
     )
     sidecar_parser.add_argument(
         '--allow-origin',
         action='append',
-        default=[],
+        default=None,
         help='Allowed browser Origin header (repeatable)',
     )
+    sidecar_parser.add_argument('--tls-cert', default=None, help='TLS certificate file for local HTTPS')
+    sidecar_parser.add_argument('--tls-key', default=None, help='TLS private key file for local HTTPS')
+    sidecar_parser.add_argument('--log-level', default=None, help='uvicorn log level')
 
     events_parser = subparsers.add_parser('events', help='Poll durable sidecar events')
     events_parser.add_argument('--after-id', type=int, default=0, help='Event cursor')
@@ -320,24 +332,37 @@ def _show_sidecar_token(args: argparse.Namespace) -> int:
 
 
 def _run_sidecar(args: argparse.Namespace) -> int:
-    from plenipo.sidecar.config import SidecarConfig, validate_bind_host, validate_no_auth_bind
+    from plenipo.sidecar.config import (
+        resolve_sidecar_config,
+        validate_bind_host,
+        validate_no_auth_bind,
+        validate_tls_config,
+    )
     from plenipo.sidecar.server import run_sidecar
 
     _apply_local_defaults()
-    config = SidecarConfig(
-        host=args.host,
-        port=args.port,
-        capability=args.capability,
-        protocol=args.protocol,
-        allow_remote_bind=args.allow_remote_bind,
-        token=args.token,
-        no_auth=args.no_auth,
-        print_token=args.print_token,
-        allowed_origins=tuple(args.allow_origin),
+    config = resolve_sidecar_config(
+        config_path=args.config,
+        cli_values={
+            'host': args.host,
+            'port': args.port,
+            'capability': args.capability,
+            'protocol': args.protocol,
+            'allow_remote_bind': args.allow_remote_bind,
+            'token': args.token,
+            'signed_request_secret': args.signed_request_secret,
+            'no_auth': args.no_auth,
+            'print_token': args.print_token,
+            'allowed_origins': tuple(args.allow_origin) if args.allow_origin is not None else None,
+            'tls_cert': args.tls_cert,
+            'tls_key': args.tls_key,
+            'log_level': args.log_level,
+        },
     )
     try:
         validate_bind_host(config.host, allow_remote_bind=config.allow_remote_bind)
         validate_no_auth_bind(config.host, no_auth=config.no_auth)
+        validate_tls_config(config)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
