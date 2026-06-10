@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import sys
 
 import uvicorn
@@ -23,6 +24,7 @@ from plenipo.sidecar.config import (
     remote_bind_warning,
     validate_bind_host,
     validate_no_auth_bind,
+    validate_tls_config,
 )
 from plenipo.sidecar.events import EventBuffer, consume_runtime_events
 
@@ -90,6 +92,7 @@ async def _startup_sidecar(config: SidecarConfig) -> None:
         auth_enabled=not config.no_auth,
         token=token,
         allowed_origins=allowed_origins_from_config(config),
+        signed_request_secret=config.signed_request_secret or os.environ.get('PLENIPO_SIDECAR_SIGNING_SECRET'),
     )
     _holder.consumer_task = consumer_task
 
@@ -114,6 +117,7 @@ async def run_sidecar_async(config: SidecarConfig) -> None:
     """Runs the sidecar until interrupted."""
     validate_bind_host(config.host, allow_remote_bind=config.allow_remote_bind)
     validate_no_auth_bind(config.host, no_auth=config.no_auth)
+    validate_tls_config(config)
     if not _is_loopback(config.host):
         print(remote_bind_warning(config.host), file=sys.stderr)
 
@@ -125,8 +129,10 @@ async def run_sidecar_async(config: SidecarConfig) -> None:
             app,
             host=config.host,
             port=config.port,
-            log_level='info',
+            log_level=config.log_level,
             access_log=False,
+            ssl_certfile=config.tls_cert,
+            ssl_keyfile=config.tls_key,
         )
     )
     try:

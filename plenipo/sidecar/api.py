@@ -9,7 +9,7 @@ from typing import Any
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from plenipo.discover import discover_agents
@@ -19,6 +19,7 @@ from plenipo.sidecar.config import SidecarSecurity
 from plenipo.sidecar.events import DurableEventService
 from plenipo.runtime.inbox_crypto import SidecarStoreKeyError
 from plenipo.sidecar.middleware import AuthMiddleware, CorsMiddleware, RequestLoggingMiddleware
+from plenipo.sidecar.metrics import render_sidecar_metrics
 from plenipo.sidecar.models import (
     SERVICE_NAME,
     SIDECAR_VERSION,
@@ -50,6 +51,7 @@ class SidecarApp:
         return Starlette(
             routes=[
                 Route('/health', self.health, methods=['GET']),
+                Route('/metrics', self.metrics, methods=['GET']),
                 Route('/status', self.status, methods=['GET']),
                 Route('/route', self.route, methods=['GET', 'POST']),
                 Route('/discover', self.discover, methods=['GET']),
@@ -69,6 +71,7 @@ class SidecarApp:
                     AuthMiddleware,
                     auth_enabled=self._security.auth_enabled,
                     token=self._security.token,
+                    signed_request_secret=self._security.signed_request_secret,
                 ),
             ],
         )
@@ -98,6 +101,13 @@ class SidecarApp:
             store=self._runtime.store,
         )
         return JSONResponse(payload)
+
+    async def metrics(self, _request: Request) -> Response:
+        """Returns sanitized local Prometheus metrics."""
+        return Response(
+            render_sidecar_metrics(self._runtime),
+            media_type='text/plain; version=0.0.4',
+        )
 
     async def route(self, request: Request) -> JSONResponse:
         """Returns or declares public route metadata."""

@@ -11,6 +11,8 @@ from typing import Any
 
 from plenipo.identity.store import plenipo_home
 
+RUNTIME_SCHEMA_VERSION = 1
+
 
 def runtime_db_path() -> Path:
     """Returns the path to runtime.sqlite."""
@@ -95,6 +97,12 @@ class RuntimeStore:
         self._conn.close()
 
     def _init_schema(self) -> None:
+        existing_version = self.schema_version()
+        if existing_version > RUNTIME_SCHEMA_VERSION:
+            raise RuntimeError(
+                f'Runtime database schema version {existing_version} is newer than '
+                f'this SDK supports ({RUNTIME_SCHEMA_VERSION})'
+            )
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS outbox (
@@ -155,7 +163,16 @@ class RuntimeStore:
             );
             """
         )
+        if existing_version < RUNTIME_SCHEMA_VERSION:
+            self._conn.execute(f'PRAGMA user_version = {RUNTIME_SCHEMA_VERSION}')
         self._conn.commit()
+
+    def schema_version(self) -> int:
+        """Returns the SQLite user_version for runtime schema migrations."""
+        row = self._conn.execute('PRAGMA user_version').fetchone()
+        if row is None:
+            return 0
+        return int(row[0])
 
     def get_state(self, key: str) -> str | None:
         """Returns a runtime state value or None."""
@@ -282,6 +299,11 @@ class RuntimeStore:
         ).fetchall()
         return {str(row['status']): int(row['count']) for row in rows}
 
+    def count_receipts(self) -> int:
+        """Returns the number of local delivery receipts."""
+        row = self._conn.execute('SELECT COUNT(*) AS count FROM receipts').fetchone()
+        return int(row['count']) if row is not None else 0
+
     def upsert_receipt(self, payload: dict[str, Any], *, sender_did: str) -> bool:
         """
         Upserts a receipt row. Returns True if newly inserted, False if duplicate.
@@ -403,6 +425,20 @@ class RuntimeStore:
     def count_inbox_messages(self) -> int:
         """Returns the number of encrypted inbox rows."""
         row = self._conn.execute('SELECT COUNT(*) AS count FROM inbox_messages').fetchone()
+        return int(row['count']) if row is not None else 0
+
+    def count_sidecar_events_by_type(self) -> dict[str, int]:
+        """Returns durable sidecar event counts grouped by type."""
+        rows = self._conn.execute(
+            'SELECT event_type, COUNT(*) AS count FROM sidecar_events GROUP BY event_type',
+        ).fetchall()
+        return {str(row['event_type']): int(row['count']) for row in rows}
+
+    def count_pending_sidecar_events(self) -> int:
+        """Returns durable sidecar events not yet delivered to a local client."""
+        row = self._conn.execute(
+            'SELECT COUNT(*) AS count FROM sidecar_events WHERE delivered_to_client_at IS NULL',
+        ).fetchone()
         return int(row['count']) if row is not None else 0
 
     def insert_inbox_message(

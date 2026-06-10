@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import uuid
 from typing import Any, cast
@@ -26,8 +27,9 @@ def parse_payment_required(header_value: str) -> dict[str, Any]:
 
 
 def build_relay_payment(agent_did: str, cost_tokens: int, envelope_id: str) -> str:
-    """Builds a dev relay payment proof for message.send."""
+    """Builds a prepaid relay payment proof for message.send."""
     payload = {
+        'scheme': 'plenipo-prepaid-token',
         'payment_id': f'pay_{secrets.token_hex(8)}',
         'agent_did': agent_did,
         'purpose': 'relay',
@@ -40,6 +42,7 @@ def build_relay_payment(agent_did: str, cost_tokens: int, envelope_id: str) -> s
 def build_bundle_payment(agent_did: str, bundle_id: str, amount_cents: int) -> str:
     """Builds a dev bundle purchase payment proof."""
     payload = {
+        'scheme': 'x402-dev',
         'payment_id': f'pay_{uuid.uuid4().hex[:16]}',
         'agent_did': agent_did,
         'purpose': 'bundle_purchase',
@@ -47,6 +50,75 @@ def build_bundle_payment(agent_did: str, bundle_id: str, amount_cents: int) -> s
         'amount_cents': amount_cents,
     }
     return encode_payment_payload(payload)
+
+
+def build_production_bundle_payment(
+    *,
+    agent_did: str,
+    bundle_id: str,
+    amount_cents: int,
+    network: str,
+    pay_to: str,
+    payer: str,
+    signature: str,
+    asset: str = 'USDC',
+    expires_at: str | None = None,
+    payment_id: str | None = None,
+) -> str:
+    """Builds a production x402 bundle purchase payload."""
+    from datetime import UTC, datetime, timedelta
+
+    payload = {
+        'scheme': 'x402',
+        'payment_id': payment_id or f'pay_{uuid.uuid4().hex[:16]}',
+        'agent_did': agent_did,
+        'purpose': 'bundle_purchase',
+        'bundle_id': bundle_id,
+        'amount_cents': amount_cents,
+        'network': network,
+        'asset': asset,
+        'pay_to': pay_to,
+        'payer': payer,
+        'expires_at': expires_at
+        or (datetime.now(UTC) + timedelta(minutes=5)).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
+        'signature': signature,
+    }
+    return encode_payment_payload(payload)
+
+
+def detect_wallet_capabilities(env: dict[str, str] | None = None) -> dict[str, Any]:
+    """Detects configured wallet providers without initializing them."""
+    env = env if env is not None else dict(os.environ)
+    providers: list[str] = []
+    raw_x402 = bool(env.get('X402_PRIVATE_KEY') or env.get('PLENIPO_X402_PRIVATE_KEY'))
+    coinbase_cdp = bool(env.get('CDP_API_KEY_ID') or env.get('CDP_API_KEY_SECRET'))
+    crossmint = bool(env.get('CROSSMINT_API_KEY'))
+
+    if raw_x402:
+        providers.append('raw-x402')
+    if coinbase_cdp:
+        providers.append('coinbase-cdp')
+    if crossmint:
+        providers.append('crossmint')
+
+    return {
+        'available': bool(providers),
+        'providers': providers,
+        'raw_x402_private_key': raw_x402,
+        'coinbase_cdp': coinbase_cdp,
+        'crossmint': crossmint,
+    }
+
+
+def should_auto_topup(
+    balance_tokens: int,
+    *,
+    enabled: bool,
+    threshold_tokens: int,
+    max_amount_cents: int,
+) -> bool:
+    """Returns whether an explicit auto-topup policy allows a topup."""
+    return enabled and max_amount_cents > 0 and balance_tokens <= threshold_tokens
 
 
 async def purchase_bundle(
