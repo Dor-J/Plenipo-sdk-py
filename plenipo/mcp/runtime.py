@@ -207,6 +207,14 @@ class McpRuntime:
         self._buffer = kept
         return drained
 
+    async def close(self) -> None:
+        """Disconnects the relay client and clears connect state."""
+        if self._client is not None:
+            await self._client.disconnect()
+        self._client = None
+        self._connected = False
+        self._buffer = []
+
 
 _default_runtime: McpRuntime | None = None
 

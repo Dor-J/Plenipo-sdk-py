@@ -23,7 +23,7 @@ from plenipo.sidecar.auth import (
     resolve_sidecar_token,
     write_sidecar_token_file,
 )
-from plenipo.sidecar.client import PlenipoSidecarClient
+from plenipo.sidecar.client import PlenipoSidecarClient, SidecarClientError
 from plenipo.sidecar.config import (
     NO_AUTH_WARNING,
     SidecarConfig,
@@ -529,6 +529,35 @@ def test_sidecar_client_calls_status_and_send(monkeypatch) -> None:  # type: ign
     assert captured[1][1] == '/send'
     assert captured[2][0] == 'GET'
     assert captured[2][1] == '/events'
+
+
+def test_sidecar_client_raises_structured_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        status_code = 429
+
+        @staticmethod
+        def json() -> dict[str, str]:
+            return {
+                'code': 'RATE_LIMITED',
+                'message': 'Rate limit exceeded.',
+                'docs_url': 'https://plenipo.dev/errors#RATE_LIMITED',
+            }
+
+    def fake_request(
+        _self: httpx.Client,
+        _method: str,
+        _path: str,
+        **_kwargs: object,
+    ) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(httpx.Client, 'request', fake_request)
+
+    with pytest.raises(SidecarClientError) as excinfo:
+        PlenipoSidecarClient(base_url='http://127.0.0.1:8787', token=TEST_TOKEN).status()
+
+    assert excinfo.value.code == 'RATE_LIMITED'
+    assert excinfo.value.docs_url.endswith('#RATE_LIMITED')
 
 
 @pytest.mark.asyncio

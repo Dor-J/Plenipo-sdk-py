@@ -242,3 +242,49 @@ def test_runtime_singleton_reset(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_mcp_runtime()
     assert get_mcp_runtime() is not first
     reset_mcp_runtime()
+
+
+async def test_runtime_close_disconnects_and_clears_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+    disconnected: list[bool] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def on_message(self, _handler: object) -> None:
+            return None
+
+        def on_receipt(self, _handler: object) -> None:
+            return None
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            disconnected.append(True)
+
+    monkeypatch.setattr('plenipo.mcp.runtime.PlenipoClient', FakeClient)
+
+    runtime = McpRuntime(
+        McpRuntimeConfig(
+            did='did:web:test.local',
+            auth_secret_b64='AAAA',
+            did_document_url='https://test.local/.well-known/did.json',
+            relay_url='ws://localhost:4000/agent/websocket',
+        )
+    )
+    runtime._buffer.append(
+        BufferedMessage(
+            kind='deliver',
+            envelope_id='01A',
+            received_at_iso='2026-01-01T00:00:00+00:00',
+        )
+    )
+
+    await runtime.ensure_connected()
+    await runtime.close()
+
+    assert disconnected == [True]
+    assert runtime._client is None
+    assert runtime._connected is False
+    assert runtime._buffer == []

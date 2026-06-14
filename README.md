@@ -4,6 +4,8 @@
 
 **plenipo-mcp** connects Python 3.11+ agents to the Plenipo relay: DID authentication, E2E encrypted messaging, discovery, dev-token billing, and autonomous Agent Runtime v0 — exposed as an MCP server, a long-lived runtime CLI, and a library.
 
+Agent-readable summary: [`llms.txt`](./llms.txt).
+
 ## Status
 
 Active development. Core relay, Registry discovery, Route Records v1, MCP tools, and **Agent Runtime v0.1** are implemented for local autonomous messaging. Wallet x402 per-message payment, marketplace, task protocol, and production wallet funding are **not** implemented in this slice.

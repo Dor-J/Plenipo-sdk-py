@@ -7,10 +7,11 @@ from typing import Any
 
 import httpx
 
+from plenipo.errors.structured import PlenipoStructuredError, parse_structured_error_body
 from plenipo.sidecar.auth import read_sidecar_token_file
 
 
-class SidecarClientError(Exception):
+class SidecarClientError(PlenipoStructuredError):
     """Raised when a sidecar HTTP request fails."""
 
 
@@ -156,8 +157,19 @@ class PlenipoSidecarClient:
             timeout=None,
         ) as response:
             if response.status_code >= 400:
+                try:
+                    parsed: Any = response.json()
+                except Exception:
+                    parsed = None
+                structured = parse_structured_error_body(
+                    parsed,
+                    fallback_code='SIDECAR_HTTP_ERROR',
+                    fallback_message=f'GET /events/stream failed with {response.status_code}',
+                )
                 raise SidecarClientError(
-                    f'GET /events/stream failed with {response.status_code}: {response.text}'
+                    code=structured.code,
+                    message=structured.message,
+                    docs_url=structured.docs_url,
                 )
             event_id = after_id
             event_type = 'message'
@@ -217,8 +229,19 @@ class PlenipoSidecarClient:
             timeout=timeout or self._timeout,
         )
         if response.status_code >= 400:
+            try:
+                parsed: Any = response.json()
+            except Exception:
+                parsed = None
+            structured = parse_structured_error_body(
+                parsed,
+                fallback_code='SIDECAR_HTTP_ERROR',
+                fallback_message=f'{method} {path} failed with {response.status_code}',
+            )
             raise SidecarClientError(
-                f'{method} {path} failed with {response.status_code}: {response.text}'
+                code=structured.code,
+                message=structured.message,
+                docs_url=structured.docs_url,
             )
         body = response.json()
         if isinstance(body, dict):

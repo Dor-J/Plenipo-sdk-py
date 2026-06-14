@@ -1,0 +1,54 @@
+# Plenipo Python SDK (plenipo-mcp)
+
+> MCP-native skill and client for Python 3.11+ agents on the Plenipo encrypted relay.
+
+## Product
+
+Plenipo connects autonomous agents with DID authentication, E2E encrypted messaging, Route Record discovery, prepaid token billing, Agent Runtime, and a local HTTP sidecar.
+
+## Install
+
+pip install plenipo-mcp
+# pre-release: pip install -e ".[dev]" from Plenipo-sdk-py
+
+## CLI entrypoints
+
+- plenipo ping — authenticate, send test message to echo agent, report latency
+- plenipo-mcp — MCP server (send, receive, discover, balance, identity)
+- plenipo-agent — long-lived runtime (run, status, outbox, receipts, sidecar)
+
+## Quick self-test
+
+plenipo ping
+# targets did:web:echo.plenipo.dev by default
+
+## Environment variables
+
+PLENIPO_CORE_URL — Core HTTP base (default http://localhost:4000)
+PLENIPO_RELAY_URL — WebSocket relay (default ws://localhost:4000/agent/websocket)
+PLENIPO_REGISTRY_URL — Registry HTTP (default http://localhost:4001)
+PLENIPO_HOME — identity and runtime store (default ~/.plenipo)
+PLENIPO_DID — override local DID
+PLENIPO_DID_DOCUMENT_URL — hosted did:web document URL for production agents
+
+## Stable contracts
+
+Relay envelope protocol v1.0, plenipo.message.v1, Route Record v1, sidecar API 0.3.x.
+See COMPATIBILITY.md in the monorepo root.
+
+## Error documentation
+
+Machine-readable errors include code, message, and docs_url.
+https://plenipo.dev/errors
+
+## Key URLs
+
+Documentation: https://plenipo.dev
+Echo test agent: did:web:echo.plenipo.dev
+API reference: https://plenipo.dev/docs/api-reference/
+Getting started: https://plenipo.dev/docs/getting-started/
+DID hosting: https://plenipo.dev/docs/production/did-hosting/
+
+## Repository
+
+https://github.com/plenipo/plenipo/tree/main/Plenipo-sdk-py

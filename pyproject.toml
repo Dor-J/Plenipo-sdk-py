@@ -45,6 +45,7 @@ dev = [
 ]
 
 [project.scripts]
+plenipo = "plenipo.ping.__main__:main"
 plenipo-mcp = "plenipo.mcp.__main__:main"
 plenipo-agent = "plenipo.agent.cli:main"
 
@@ -56,6 +57,7 @@ Issues = "https://github.com/plenipo/plenipo/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["plenipo"]
+artifacts = ["llms.txt", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
